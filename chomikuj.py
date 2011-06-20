@@ -48,6 +48,7 @@ def convert_bytes( mbytes ):
         size = '%.2fK' % kilobytes
     else:
         size = '%.2fb' % bytes
+    
     return size
 
 class Chomik:
@@ -112,23 +113,15 @@ class Chomik:
                 folder_id = dir_id
                 continue
 
-            self.browser.form = HTMLForm( 'http://chomikuj.pl/Chomik/FolderOptions/NewFolderAction', method='POST' )
-            self.browser.form.new_control( 'hidden', 'IdFolder', {} )
-            self.browser.form.new_control( 'hidden', 'IdChomik', {} )
-            self.browser.form.new_control( 'text', 'FolderName', {} )
-            self.browser.form.new_control( 'text', 'GalleryMode', {} )
-            self.browser.form.new_control( 'text', 'AdultContent', {} )
-            self.browser.form.new_control( 'text', 'Description', {} )
-            self.browser.form.new_control( 'text', 'Password', {} )
-
-            self.browser.form.set_all_readonly( False )
-            self.browser.form.fixup()
-
-            self.browser['IdFolder'] = folder_id
-            self.browser['IdChomik'] = self.chomik_id
-            self.browser['FolderName'] = folder
-            self.browser['GalleryMode'] = "false"
-            self.browser['AdultContent'] = "false"
+            self._create_form( 'http://chomikuj.pl/Chomik/FolderOptions/NewFolderAction', [
+                { 'name': 'IdFolder', 'type': 'hidden', 'value': folder_id, 'args': {} },
+                { 'name': 'IdChomik', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
+                { 'name': 'FolderName', 'type': 'text', 'value': folder, 'args': {} },
+                { 'name': 'GalleryMode', 'type': 'text', 'value': "false", 'args': {} },
+                { 'name': 'AdultContent', 'type': 'text', 'value': "false", 'args': {} },
+                { 'name': 'Description', 'type': 'text', 'value': "", 'args': {} },
+                { 'name': 'Password', 'type': 'text', 'value': "", 'args': {} } 
+            ])
 
             response = self.browser.submit()
             matcher = re.search( 'switchFolder\((\d+)\)', response.read() )
@@ -145,7 +138,10 @@ class Chomik:
 
         sub_url = url if url.startswith( '/' ) else "/%s" % url
         response = self.browser.open( "http://chomikuj.pl%s" % sub_url )
-        soup = BeautifulSoup( response.read() )
+        text = response.read()
+        regex = re.compile( "</'", re.IGNORECASE )
+        text = regex.sub( "<\/'", text )
+        soup = BeautifulSoup( text )
 
         user_id, directory_id = None, None
         for button in soup.findAll( onclick=re.compile( "ch.CopyFilesAndFolders.ShowCopyFolderWindow\(.*\);" ) ):
@@ -159,26 +155,15 @@ class Chomik:
             print " -- cloning directory [%s] %s, %s" % ( db[url], user_id, directory_id )
             folder_id = self.create_directory( sub_url )
 
-            self.browser._factory.is_html = True
-
-            self.browser.form = HTMLForm( 'http://chomikuj.pl/Chomik/Content/Copy/CopyFolder', method='POST' )
-            self.browser.form.new_control( 'hidden', 'chosenFolder.ChomikId', {} )
-            self.browser.form.new_control( 'hidden', 'chosenFolder.FolderId', {} )
-            self.browser.form.new_control( 'text', 'chosenFolder.Name', {} )
-            self.browser.form.new_control( 'hidden', 'SelectedFolderId', {} )
-            self.browser.form.new_control( 'hidden', 'SelectTreeChomikId', {} )
-            self.browser.form.new_control( 'hidden', 'SelectTreeMd5', {} )
-            self.browser.form.new_control( 'submit', 'cfSubmitBtn', {} )
-
-            self.browser.form.set_all_readonly( False )
-            self.browser.form.fixup()
-
-            self.browser['chosenFolder.ChomikId'] = user_id
-            self.browser['chosenFolder.FolderId'] = directory_id
-            self.browser['chosenFolder.Name'] = db[url]
-            self.browser['SelectedFolderId'] = folder_id
-            self.browser['SelectTreeChomikId'] = self.chomik_id
-            self.browser['SelectTreeMd5'] = self.chomik_md5
+            self._create_form( 'http://chomikuj.pl/Chomik/Content/Copy/CopyFolder', [
+                { 'name': 'chosenFolder.ChomikId', 'type': 'hidden', 'value': user_id, 'args': {} },
+                { 'name': 'chosenFolder.FolderId', 'type': 'hidden', 'value': directory_id, 'args': {} },
+                { 'name': 'chosenFolder.Name', 'type': 'text', 'value': db[url], 'args': {} },
+                { 'name': 'SelectedFolderId', 'type': 'text', 'value': folder_id, 'args': {} },
+                { 'name': 'SelectTreeChomikId', 'type': 'text', 'value': self.chomik_id, 'args': {} },
+                { 'name': 'SelectTreeMd5', 'type': 'text', 'value': self.chomik_md5, 'args': {} },
+                { 'name': 'cfSubmitBtn', 'type': 'submit', 'args': {} },
+            ])
 
             response = self.browser.submit()
             matcher = re.search( 'Folder został zachomikowany', response.read() )
@@ -218,6 +203,19 @@ class Chomik:
             result['points'] = matcher.group( 1 )
 
         return result
+
+    def _create_form( self, url, fields, method='POST' ):
+        self.browser._factory.is_html = True
+        self.browser.form = HTMLForm( url, method=method )
+        for field in fields:
+            self.browser.form.new_control( field['type'], field['name'], field['args'] )
+
+        self.browser.form.set_all_readonly( False )
+        self.browser.form.fixup()
+
+        for field in fields:
+            if field.has_key( 'value' ):
+                self.browser[ field['name'] ] = field['value']
 
 
 # vim: fdm=marker ts=4 sw=4 sts=4

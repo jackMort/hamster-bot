@@ -21,12 +21,14 @@ from optparse import OptionParser, OptionGroup
 parser = OptionParser( usage="usage: %prog [OPTIONS]" )
 
 parser.add_option( "-c", "--copy", dest="copy", action="store_true", help="recursivly copy directories" )
+parser.add_option( "-m", "--mkdir", dest="mkdir", help="mkdir" )
 parser.add_option( "-s", "--stats", dest="stats", action="store_true", help="print user stats" )
 
 parser.add_option( "-u", "--username", dest="username", help="chomik username" )
 parser.add_option( "-p", "--password", dest="password", help="chomik password" )
 
 parser.add_option( "-f", "--file", dest="file", help="users file" )
+parser.add_option( "-b", "--users", dest="users", help="list of users" )
 
 if __name__ == "__main__":
     ( options, args ) = parser.parse_args()
@@ -38,7 +40,7 @@ if __name__ == "__main__":
             if options.users:
                 users = options.users
             else:
-                users = [ u for u in open( options.file, 'r' ) ]
+                users = [ u.strip() for u in open( options.file, 'r' ) ]
 
             for user in users:
                 print chomik.copy_directory_tree( user )
@@ -50,5 +52,9 @@ if __name__ == "__main__":
             print " files : %s" % stats['files']
             print " size  : %s" % stats['size']
             print "--------------------------"
-        
+
+    if options.mkdir:
+        if chomik.connect():
+            print chomik.create_directory( options.mkdir )
+
 # vim: fdm=marker ts=4 sw=4 sts=4
