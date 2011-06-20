@@ -32,6 +32,24 @@ from BeautifulSoup import BeautifulSoup
 #logger.addHandler( logging.StreamHandler( sys.stderr ) )
 #logger.setLevel( logging.DEBUG )
 
+def convert_bytes( mbytes ):
+    bytes = float( mbytes ) * 1048576
+    if bytes >= 1099511627776:
+        terabytes = bytes / 1099511627776
+        size = '%.2fT' % terabytes
+    elif bytes >= 1073741824:
+        gigabytes = bytes / 1073741824
+        size = '%.2fG' % gigabytes
+    elif bytes >= 1048576:
+        megabytes = bytes / 1048576
+        size = '%.2fM' % megabytes
+    elif bytes >= 1024:
+        kilobytes = bytes / 1024
+        size = '%.2fK' % kilobytes
+    else:
+        size = '%.2fb' % bytes
+    return size
+
 class Chomik:
     def __init__( self, name, password ):
         self.name = name
@@ -59,7 +77,7 @@ class Chomik:
                     print "--------------------------"
                     print " Logged as %s(%s) [%s]" % ( self.chomik_name, self.chomik_id, self.chomik_md5 )
                     print "--------------------------"
-                return True
+                    return True
         return False
 
     def check_directory( self, url ):
@@ -105,13 +123,13 @@ class Chomik:
 
             self.browser.form.set_all_readonly( False )
             self.browser.form.fixup()
-            
+
             self.browser['IdFolder'] = folder_id
             self.browser['IdChomik'] = self.chomik_id
             self.browser['FolderName'] = folder
             self.browser['GalleryMode'] = "false"
             self.browser['AdultContent'] = "false"
-        
+
             response = self.browser.submit()
             matcher = re.search( 'switchFolder\((\d+)\)', response.read() )
             if matcher:
@@ -124,11 +142,11 @@ class Chomik:
     def copy_directory_tree( self, url, db=None ):
         if db is None:
             db = {}
-        
+
         sub_url = url if url.startswith( '/' ) else "/%s" % url
         response = self.browser.open( "http://chomikuj.pl%s" % sub_url )
         soup = BeautifulSoup( response.read() )
-        
+
         user_id, directory_id = None, None
         for button in soup.findAll( onclick=re.compile( "ch.CopyFilesAndFolders.ShowCopyFolderWindow\(.*\);" ) ):
             matcher = re.search( 'ch.CopyFilesAndFolders.ShowCopyFolderWindow\((\d+), (\d+)\);', button['onclick'] )
@@ -154,14 +172,14 @@ class Chomik:
 
             self.browser.form.set_all_readonly( False )
             self.browser.form.fixup()
-            
+
             self.browser['chosenFolder.ChomikId'] = user_id
             self.browser['chosenFolder.FolderId'] = directory_id
             self.browser['chosenFolder.Name'] = db[url]
             self.browser['SelectedFolderId'] = folder_id
             self.browser['SelectTreeChomikId'] = self.chomik_id
             self.browser['SelectTreeMd5'] = self.chomik_md5
-            
+
             response = self.browser.submit()
             matcher = re.search( 'Folder został zachomikowany', response.read() )
             if matcher:
@@ -178,5 +196,28 @@ class Chomik:
                 self.copy_directory_tree( folder['href'], db )
 
         return len( db )
+
+    def get_stats( self ):
+        result = {
+            'points': 0,
+            'files': 0,
+            'size': 0
+        }
+        response = self.browser.open( "http://chomikuj.pl/%s" % self.chomik_name )
+        text = response.read()
+        matcher = re.search( '<span id="ctl00_CT_StatsSize"><b>(.*) MB</b></span>', text )
+        if matcher:
+            result['size'] = convert_bytes( float( matcher.group( 1 ).replace( ',', '.' ) ) )
+
+        matcher = re.search( '<span id="ctl00_CT_StatsFilesCount"><b>(.*)</b></span>', text )
+        if matcher:
+            result['files'] = matcher.group( 1 )
+
+        matcher = re.search( '<span id="ctl00_CT_PointsLabel">(.*)</span>', text )
+        if matcher:
+            result['points'] = matcher.group( 1 )
+
+        return result
+
 
 # vim: fdm=marker ts=4 sw=4 sts=4
