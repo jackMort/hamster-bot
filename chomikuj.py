@@ -21,6 +21,7 @@ sys.setdefaultencoding( 'utf-8' )
 
 import os
 import re
+import time
 import string
 import random
 import urllib2
@@ -241,6 +242,36 @@ class Chomik:
 
             else:
                 print "  -- ivite ERROR :("
+
+    def generate_list( self, count=100, filename="list.txt" ):
+        print " -- generating list of %d users to %s" % ( count, filename )
+        users = []
+        file = open( filename, 'r' )
+        if file:
+            users = [ u.strip() for u in file ]
+            file.close()
+
+        response = self.browser.open( "http://chomikuj.pl/services/GetLastSeen.aspx?_=1&maxNum=18&colNum=1&pauseTime=500" )
+        for item in re.findall( '<a class="name" href="\/(.*)"', response.read() ):
+            if len( users ) >= count:
+                print " -- users list contains %d users [CLOSING]" % len( users )
+                return
+
+            if item in users:
+                print "  -- user %s already exists [SKIPING]" % item
+            else:
+                print "  -- ... %s" % item
+                users.append( item )
+
+        file = open( filename, 'w' )
+        for u in users:
+            file.write( "%s\n" % u )
+        file.close()
+
+        if len( users ) < count:
+            print "  -- we already have %d [CONTINUE]" % len( users )
+            time.sleep( 5 )
+            return self.generate_list( count, filename )
 
     def _create_form( self, url, fields, method='POST' ):
         self.browser._factory.is_html = True

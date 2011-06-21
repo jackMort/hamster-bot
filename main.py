@@ -25,6 +25,7 @@ parser.add_option( "-m", "--mkdir", dest="mkdir", help="mkdir" )
 parser.add_option( "-r", "--rmdir", dest="rmdir", help="remove directory" )
 parser.add_option( "-s", "--stats", dest="stats", action="store_true", help="print user stats" )
 parser.add_option( "-i", "--invite", dest="invite", action="store_true", help="invite users" )
+parser.add_option( "-g", "--generate", dest="generate_list", help="generate users list" )
 
 parser.add_option( "-u", "--username", dest="username", help="chomik username" )
 parser.add_option( "-p", "--password", dest="password", help="chomik password" )
@@ -73,5 +74,9 @@ if __name__ == "__main__":
     if options.rmdir:
         if chomik.connect():
             print chomik.remove_directory( options.rmdir )
+
+    if options.generate_list:
+        if chomik.connect():
+            chomik.generate_list( count=int( options.generate_list ) )
 
 # vim: fdm=marker ts=4 sw=4 sts=4
