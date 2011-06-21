@@ -76,7 +76,6 @@ if __name__ == "__main__":
             print chomik.remove_directory( options.rmdir )
 
     if options.generate_list:
-        if chomik.connect():
-            chomik.generate_list( count=int( options.generate_list ) )
+        chomik.generate_list( count=int( options.generate_list ) )
 
 # vim: fdm=marker ts=4 sw=4 sts=4
