@@ -48,7 +48,7 @@ def convert_bytes( mbytes ):
         size = '%.2fK' % kilobytes
     else:
         size = '%.2fb' % bytes
-    
+
     return size
 
 class Chomik:
@@ -101,6 +101,18 @@ class Chomik:
                     return id
         return None
 
+    def remove_directory( self, url ):
+        url = url[1:] if url.startswith( '/' ) else url
+        folder_id = self.check_directory( url )
+        if folder_id is not None:
+            self._create_form( 'http://chomikuj.pl/Chomik/FolderOptions/DeleteFolderAction', [
+                { 'name': 'FolderId', 'type': 'hidden', 'value': folder_id, 'args': {} },
+                { 'name': 'ChomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
+            ])
+
+            response = self.browser.submit()
+            return re.search( 'został pomyślnie usunięty', response.read() )
+        return None
 
     def create_directory( self, url ):
         url = url[1:] if url.startswith( '/' ) else url
@@ -203,6 +215,32 @@ class Chomik:
             result['points'] = matcher.group( 1 )
 
         return result
+
+    def invite( self, user ):
+        print " -- inviting %s" % user
+        response = self.browser.open( "http://chomikuj.pl/%s" % user )
+        matcher = re.search( '<input name="ctl00\$CT\$ChomikID" type="hidden" id="ctl00_CT_ChomikID" value="(\d+)" \/>', response.read() )
+        if matcher:
+            chomik_id = matcher.group( 1 )
+            self._create_form( 'http://chomikuj.pl/Chomik/Friends/NewFriend', [
+                { 'name': 'chomikFriendId', 'type': 'hidden', 'value': chomik_id, 'args': {} },
+                { 'name': 'frDescr', 'type': 'text', 'value': '', 'args': {} },
+                { 'name': 'frMsg', 'type': 'text', 'value': '', 'args': {} },
+                { 'name': 'fromPMBox', 'type': 'hidden', 'value': 'false', 'args': {} },
+                { 'name': 'groupId', 'type': 'text', 'value': '0', 'args': {} },
+                { 'name': 'page', 'type': 'text', 'value': '1', 'args': {} },
+            ])
+
+            response = self.browser.submit()
+            text = response.read()
+            if re.search( 'Nie można dodać tego samego Chomika jako przyjaciela', text ):
+                print "  -- already invited"
+
+            elif re.search( 'Chomik został dodany', text ):
+                print "  -- INVITED"
+
+            else:
+                print "  -- ivite ERROR :("
 
     def _create_form( self, url, fields, method='POST' ):
         self.browser._factory.is_html = True
