@@ -81,7 +81,8 @@ if __name__ == "__main__":
                 users = [ u.strip() for u in open( options.file, 'r' ) ]
 
             for user in users:
-                chomik.send_chat_message( user, options.send_message )
+                message = open( options.send_message, 'r' ).read()
+                chomik.send_chat_message( user, message )
                 if options.timeout:
                     sleep( options.timeout )
 
