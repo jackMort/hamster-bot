@@ -26,6 +26,7 @@ parser.add_option( "-r", "--rmdir", dest="rmdir", help="remove directory" )
 parser.add_option( "-s", "--stats", dest="stats", action="store_true", help="print user stats" )
 parser.add_option( "-i", "--invite", dest="invite", action="store_true", help="invite users" )
 parser.add_option( "-g", "--generate", dest="generate_list", help="generate users list" )
+parser.add_option( "-x", "--send-message", dest="send_message", help="send chat message" )
 
 parser.add_option( "-u", "--username", dest="username", help="chomik username" )
 parser.add_option( "-p", "--password", dest="password", help="chomik password" )
@@ -58,6 +59,17 @@ if __name__ == "__main__":
 
             for user in users:
                 chomik.invite( user )
+
+    if options.send_message:
+        if chomik.connect():
+            users = []
+            if options.users:
+                users = options.users
+            else:
+                users = [ u.strip() for u in open( options.file, 'r' ) ]
+
+            for user in users:
+                chomik.send_chat_message( user, options.send_message )
 
     if options.stats:
         if chomik.connect():

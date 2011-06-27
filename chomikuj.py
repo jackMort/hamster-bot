@@ -243,6 +243,27 @@ class Chomik:
             else:
                 print "  -- ivite ERROR :("
 
+    def send_chat_message( self, user, message ):
+        print " -- sending chat message %s" % user
+        response = self.browser.open( "http://chomikuj.pl/%s" % user )
+        matcher = re.search( '<input name="ctl00\$CT\$ChomikID" type="hidden" id="ctl00_CT_ChomikID" value="(\d+)" \/>', response.read() )
+        if matcher:
+            chomik_id = matcher.group( 1 )
+            self._create_form( 'http://chomikuj.pl/services/ChomikChatService.asmx/AddChatMessage', [
+                { 'name': 'idChomikTo', 'type': 'hidden', 'value': chomik_id, 'args': {} },
+                { 'name': 'nick', 'type': 'text', 'value': '', 'args': {} },
+                { 'name': 'pageNum', 'type': 'text', 'value': '0', 'args': {} },
+                { 'name': 'recaptchaChallengeVal', 'type': 'hidden', 'value': '', 'args': {} },
+                { 'name': 'recaptchaResponseVal', 'type': 'hidden', 'value': '', 'args': {} },
+                { 'name': 'timeFilter', 'type': 'text', 'value': '0', 'args': {} },
+                { 'name': 'text', 'type': 'text', 'value': message, 'args': {} },
+            ])
+
+            response = self.browser.submit()
+            text = response.read()
+            if re.search( 'class="delLink"', text ):
+                print "  -- SENDED"
+
     def generate_list( self, count=100, filename="list.txt" ):
         print " -- generating list of %d users to %s" % ( count, filename )
         users = []
