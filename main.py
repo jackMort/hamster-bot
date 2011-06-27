@@ -15,8 +15,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import time
+
 from chomikuj import Chomik
 from optparse import OptionParser, OptionGroup
+
+def sleep( timeout ):
+    timeout = int( timeout )
+    print "   -- going sleep for %d secs." % timeout
+    time.sleep( timeout )
 
 parser = OptionParser( usage="usage: %prog [OPTIONS]" )
 
@@ -33,6 +40,7 @@ parser.add_option( "-p", "--password", dest="password", help="chomik password" )
 
 parser.add_option( "-f", "--file", dest="file", help="users file" )
 parser.add_option( "-b", "--users", dest="users", help="list of users" )
+parser.add_option( "-t", "--timeout", dest="timeout", help="timeout in secs" )
 
 if __name__ == "__main__":
     ( options, args ) = parser.parse_args()
@@ -48,6 +56,8 @@ if __name__ == "__main__":
 
             for user in users:
                 print chomik.copy_directory_tree( user )
+                if options.timeout:
+                    sleep( options.timeout )
 
     if options.invite:
         if chomik.connect():
@@ -59,6 +69,8 @@ if __name__ == "__main__":
 
             for user in users:
                 chomik.invite( user )
+                if options.timeout:
+                    sleep( options.timeout )
 
     if options.send_message:
         if chomik.connect():
@@ -70,6 +82,8 @@ if __name__ == "__main__":
 
             for user in users:
                 chomik.send_chat_message( user, options.send_message )
+                if options.timeout:
+                    sleep( options.timeout )
 
     if options.stats:
         if chomik.connect():
