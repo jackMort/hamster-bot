@@ -52,6 +52,9 @@ def convert_bytes( mbytes ):
 
     return size
 
+class CaptchNeededException( Exception ):
+    pass
+
 class Chomik:
     def __init__( self, name, password ):
         self.name = name
@@ -243,7 +246,7 @@ class Chomik:
             else:
                 print "  -- ivite ERROR :("
 
-    def send_chat_message( self, user, message ):
+    def send_chat_message( self, user, message, recaptchaChallengeVal='', recaptchaResponseVal='' ):
         print " -- sending chat message %s" % user
         response = self.browser.open( "http://chomikuj.pl/%s" % user )
         matcher = re.search( '<input name="ctl00\$CT\$ChomikID" type="hidden" id="ctl00_CT_ChomikID" value="(\d+)" \/>', response.read() )
@@ -253,16 +256,22 @@ class Chomik:
                 { 'name': 'idChomikTo', 'type': 'hidden', 'value': chomik_id, 'args': {} },
                 { 'name': 'nick', 'type': 'text', 'value': '', 'args': {} },
                 { 'name': 'pageNum', 'type': 'text', 'value': '0', 'args': {} },
-                { 'name': 'recaptchaChallengeVal', 'type': 'hidden', 'value': '', 'args': {} },
-                { 'name': 'recaptchaResponseVal', 'type': 'hidden', 'value': '', 'args': {} },
+                { 'name': 'recaptchaChallengeVal', 'type': 'hidden', 'value': recaptchaChallengeVal, 'args': {} },
+                { 'name': 'recaptchaResponseVal', 'type': 'hidden', 'value': recaptchaResponseVal, 'args': {} },
                 { 'name': 'timeFilter', 'type': 'text', 'value': '0', 'args': {} },
                 { 'name': 'text', 'type': 'text', 'value': message, 'args': {} },
             ])
 
             response = self.browser.submit()
             text = response.read()
-            if re.search( 'class="delLink"', text ):
+            if re.search( '<NeedCaptcha>true</NeedCaptcha>', text ):
+                raise CaptchNeededException()
+                
+            elif re.search( '<Status>true</Status>', text ):
                 print "  -- SENDED"
+
+            else:
+                print " -- ERROR"
 
     def generate_list( self, count=100, filename="list.txt" ):
         print " -- generating list of %d users to %s" % ( count, filename )
@@ -291,7 +300,7 @@ class Chomik:
 
         if len( users ) < count:
             print "  -- we already have %d [CONTINUE]" % len( users )
-            time.sleep( 5 )
+            time.sleep( 10 )
             return self.generate_list( count, filename )
 
     def _create_form( self, url, fields, method='POST' ):

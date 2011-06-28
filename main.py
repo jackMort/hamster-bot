@@ -15,15 +15,66 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
+import sys
 import time
 
-from chomikuj import Chomik
 from optparse import OptionParser, OptionGroup
+from chomikuj import Chomik, CaptchNeededException
 
 def sleep( timeout ):
     timeout = int( timeout )
     print "   -- going sleep for %d secs." % timeout
     time.sleep( timeout )
+
+def user_done( type, user ):
+    try:
+        return user in [ u.strip() for u in open( "db/%s.dat" % type, 'r' ) ]
+    except Exception:
+        return False
+
+def add_user_to_done( type, user ):
+    if not os.path.isdir( 'db' ):
+        os.mkdir( 'db' )
+
+    f = open( 'db/%s.dat' % type, 'a' )
+    f.write( '%s\n' % user )
+    f.close()
+
+
+def query_yes_no_quit(question, default="yes"):
+    """Ask a yes/no/quit question via raw_input() and return their answer.
+    
+    "question" is a string that is presented to the user.
+    "default" is the presumed answer if the user just hits <Enter>.
+        It must be "yes" (the default), "no", "quit" or None (meaning
+        an answer is required of the user).
+
+    The "answer" return value is one of "yes", "no" or "quit".
+    """
+    valid = {"yes":"yes",   "y":"yes",    "ye":"yes",
+             "no":"no",     "n":"no",
+             "quit":"quit", "qui":"quit", "qu":"quit", "q":"quit"}
+    if default == None:
+        prompt = " [y/n/q] "
+    elif default == "yes":
+        prompt = " [Y/n/q] "
+    elif default == "no":
+        prompt = " [y/N/q] "
+    elif default == "quit":
+        prompt = " [y/n/Q] "
+    else:
+        raise ValueError("invalid default answer: '%s'" % default)
+
+    while 1:
+        sys.stdout.write(question + prompt)
+        choice = raw_input().lower()
+        if default is not None and choice == '':
+            return default
+        elif choice in valid.keys():
+            return valid[choice]
+        else:
+            sys.stdout.write("Please respond with 'yes', 'no' or 'quit'.\n")
 
 parser = OptionParser( usage="usage: %prog [OPTIONS]" )
 
@@ -81,10 +132,23 @@ if __name__ == "__main__":
                 users = [ u.strip() for u in open( options.file, 'r' ) ]
 
             for user in users:
-                message = open( options.send_message, 'r' ).read()
-                chomik.send_chat_message( user, message )
-                if options.timeout:
-                    sleep( options.timeout )
+                do_this = True
+                while do_this:
+                    try:
+                        if not user_done( 'send_message', user ):
+                            message = open( options.send_message, 'r' ).read()
+                            chomik.send_chat_message( user, message )
+                            add_user_to_done( 'send_message', user )
+                            if options.timeout:
+                                sleep( options.timeout )
+                        else:
+                            print " -- skipping user %s, already processed" % user
+
+                        do_this = False
+
+                    except CaptchNeededException:
+                        if query_yes_no_quit( "   -- WRITE CAPTCHA AND TRY AGAIN, continue ?" ) <> 'yes':
+                            sys.exit( 1 )
 
     if options.stats:
         if chomik.connect():
