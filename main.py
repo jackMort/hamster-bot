@@ -27,17 +27,17 @@ def sleep( timeout ):
     print "   -- going sleep for %d secs." % timeout
     time.sleep( timeout )
 
-def user_done( type, user ):
+def user_done( type, username, user ):
     try:
-        return user in [ u.strip() for u in open( "db/%s.dat" % type, 'r' ) ]
+        return user in [ u.strip() for u in open( "db/%s_%s.dat" % ( username, type ), 'r' ) ]
     except Exception:
         return False
 
-def add_user_to_done( type, user ):
+def add_user_to_done( type, username, user ):
     if not os.path.isdir( 'db' ):
         os.mkdir( 'db' )
 
-    f = open( 'db/%s.dat' % type, 'a' )
+    f = open( "db/%s_%s.dat" % ( username, type ), 'a' )
     f.write( '%s\n' % user )
     f.close()
 
@@ -135,10 +135,10 @@ if __name__ == "__main__":
                 do_this = True
                 while do_this:
                     try:
-                        if not user_done( 'send_message', user ):
+                        if not user_done( 'send_message', options.username, user ):
                             message = open( options.send_message, 'r' ).read()
                             chomik.send_chat_message( user, message )
-                            add_user_to_done( 'send_message', user )
+                            add_user_to_done( 'send_message', options.username, user )
                             if options.timeout:
                                 sleep( options.timeout )
                         else:
