@@ -33,6 +33,12 @@ from BeautifulSoup import BeautifulSoup
 #logger.addHandler( logging.StreamHandler( sys.stderr ) )
 #logger.setLevel( logging.DEBUG )
 
+HTML_TAGS_PATTERN = re.compile( r'<.*?>' )
+WHITE_SPACES_PATTERN = re.compile( r'\s+' )
+
+def clean_html( text ):
+    return HTML_TAGS_PATTERN.sub( '', str( text ) )
+
 def convert_bytes( mbytes ):
     bytes = float( mbytes ) * 1048576
     if bytes >= 1099511627776:
@@ -60,6 +66,7 @@ class Chomik:
         self.name = name
         self.password = password
         self.browser = Browser()
+        self.browser.set_handle_robots( False )
         self._cached_directories = {}
 
     def connect( self ):
@@ -272,6 +279,39 @@ class Chomik:
 
             else:
                 print " -- ERROR"
+
+    def read_directory( self, url ):
+        sub_url = url if url.startswith( '/' ) else "/%s" % url
+        response = self.browser.open( "http://chomikuj.pl%s" % sub_url )
+        text = response.read()
+        regex = re.compile( "</'", re.IGNORECASE )
+        text = regex.sub( "<\/'", text )
+        soup = BeautifulSoup( text )
+        
+        result = {
+            "folders": [],
+            "files": []
+        }
+        main_panel = soup.find( id='ctl00_CT_FW_FolderList' )
+        for folder in main_panel.findAll( 'a', onclick=re.compile( "return Ts\(.*" ), href=re.compile( "%s/.*" % re.escape( sub_url ) ) ):
+            result['folders'].append( ( folder.string, folder['href'] ) )
+
+        for a in soup.findAll( 'a', { 'class': 'FileName' } ):
+            matcher = re.search( 'FileNameAnchor_(\d+)', a['id'] )
+            result['files'].append( ( clean_html( a.b ), a['href'], matcher.group( 1 ) ) )
+
+        return result
+
+    def download_file_by_id( self, id ):
+        self._create_form( 'http://chomikuj.pl/Chomik/License/Download', [
+            { 'name': 'fileId', 'type': 'hidden', 'value': id, 'args': {} },
+        ])
+        response = self.browser.submit()
+        matcher = re.search( '{"redirectUrl":"([^"]*)"', response.read() )
+        if matcher:
+            url = matcher.group( 1 )
+            name = re.search( '&name=(.*)&', url ).group( 1 )
+            os.system( "wget '%s' -O '%s'" % ( url, name ) )
 
     def generate_list( self, count=100, filename="list.txt" ):
         print " -- generating list of %d users to %s" % ( count, filename )

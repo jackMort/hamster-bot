@@ -41,6 +41,20 @@ def add_user_to_done( type, username, user ):
     f.write( '%s\n' % user )
     f.close()
 
+def query_number( question, default=0 ):
+    prompt = " [%s] " % default
+    while 1:
+        sys.stdout.write( question + prompt )
+        choice = raw_input().lower()
+        if default is not None and choice == '':
+            return default
+
+        elif choice:
+            return int( choice )
+
+        else:
+            sys.stdout.write( "Please select the number.\n" )
+
 
 def query_yes_no_quit(question, default="yes"):
     """Ask a yes/no/quit question via raw_input() and return their answer.
@@ -85,6 +99,7 @@ parser.add_option( "-s", "--stats", dest="stats", action="store_true", help="pri
 parser.add_option( "-i", "--invite", dest="invite", action="store_true", help="invite users" )
 parser.add_option( "-g", "--generate", dest="generate_list", help="generate users list" )
 parser.add_option( "-x", "--send-message", dest="send_message", help="send chat message" )
+parser.add_option( "-d", "--download", dest="download", help="download file from given directory" )
 
 parser.add_option( "-u", "--username", dest="username", help="chomik username" )
 parser.add_option( "-p", "--password", dest="password", help="chomik password" )
@@ -119,9 +134,14 @@ if __name__ == "__main__":
                 users = [ u.strip() for u in open( options.file, 'r' ) ]
 
             for user in users:
-                chomik.invite( user )
-                if options.timeout:
-                    sleep( options.timeout )
+                if not user_done( 'invite', options.username, user ):
+                    chomik.invite( user )
+                    add_user_to_done( 'invite', options.username, user )
+                    if options.timeout:
+                        sleep( options.timeout )
+
+                else:
+                   print " -- skipping user %s, already processed" % user
 
     if options.send_message:
         if chomik.connect():
@@ -149,6 +169,59 @@ if __name__ == "__main__":
                     except CaptchNeededException:
                         if query_yes_no_quit( "   -- WRITE CAPTCHA AND TRY AGAIN, continue ?" ) <> 'yes':
                             sys.exit( 1 )
+
+    if options.download:
+        if chomik.connect():
+            directory = options.download
+            do_this = True
+            while do_this:
+                print " -- Reading directory %s" % directory
+                do_this = False
+                result = chomik.read_directory( directory )
+                len_folders = len( result['folders'] )
+                len_files = len( result['files'] )
+                if  len_folders + len_files == 0:
+                    print "directory contains 0 folders and 0 files ..."
+                else:
+                    i = 0
+                    tmp_dict = {}
+                    print " :: %d folders" % len_folders
+                    for item in result['folders']:
+                        i += 1
+                        tmp_dict[i] = {
+                            'type': 'folder',
+                            'href': item[1]
+                        }
+                        print "[%d]  + %s ( %s )" % ( i, item[0], item[1] )
+
+                    print " :: %d files" % len_files
+                    for item in result['files']:
+                        i += 1
+                        tmp_dict[i] = {
+                            'type': 'file',
+                            'id': item[2],
+                            'name': item[0]
+                        }
+                        print "[%d]  + %s ( %s )" % ( i, item[0], item[2] )
+
+                    result = query_number( "Select a number of item ( 0 to download all files )" )
+                    if result == 0:
+                        print " -- downloading all files %d" % len_files
+                        for key, item in tmp_dict.items():
+                            if item['type'] == 'file':
+                               print " -- downloading file %s" % item['name']
+                               chomik.download_file_by_id( item['id'] )
+
+                    elif tmp_dict.has_key( result ):
+                        item = tmp_dict[result]
+                        if item['type'] == 'file':
+                            print " -- downloading file %s" % item['name']
+                            chomik.download_file_by_id( item['id'] )
+                        else:
+                            do_this = True
+                            directory = item['href']
+                    else:
+                        print "Bad choice ..."
 
     if options.stats:
         if chomik.connect():
