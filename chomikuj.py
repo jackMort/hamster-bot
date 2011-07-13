@@ -159,8 +159,8 @@ class Chomik:
         if db is None:
             db = {}
 
-        sub_url = url if url.startswith( '/' ) else "/%s" % url
-        response = self.browser.open( "http://chomikuj.pl%s" % sub_url )
+        url = url if url.startswith( '/' ) else "/%s" % url
+        response = self.browser.open( "http://chomikuj.pl%s" % url )
         text = response.read()
         regex = re.compile( "</'", re.IGNORECASE )
         text = regex.sub( "<\/'", text )
@@ -171,12 +171,15 @@ class Chomik:
             matcher = re.search( 'ch.CopyFilesAndFolders.ShowCopyFolderWindow\((\d+), (\d+)\);', button['onclick'] )
             user_id, directory_id = matcher.groups()
 
-        if user_id and directory_id:
+        if self._is_item_done( 'copy', url ):
+            print " -- url %s done [SKIPING]" % url
+
+        elif user_id and directory_id:
             if not db.has_key( url ) or db[url] is None:
                 db[url] = url.split( '/' )[:1][0]
 
             print " -- cloning directory [%s] %s, %s" % ( db[url], user_id, directory_id )
-            folder_id = self.create_directory( sub_url )
+            folder_id = self.create_directory( url )
 
             self._create_form( 'http://chomikuj.pl/Chomik/Content/Copy/CopyFolder', [
                 { 'name': 'chosenFolder.ChomikId', 'type': 'hidden', 'value': user_id, 'args': {} },
@@ -196,8 +199,10 @@ class Chomik:
                 print " ------------------------------"
                 print " -- NIE ZACHOMIKOWANO KUUURWA !"
                 print " ------------------------------"
+            
+            self._add_item_to_done( 'copy', url )
 
-        for folder in soup.findAll( onclick=re.compile( "return Ts\(.*" ), href=re.compile( "%s/.*" % re.escape( sub_url ) ) ):
+        for folder in soup.findAll( onclick=re.compile( "return Ts\(.*" ), href=re.compile( "%s/.*" % re.escape( url ) ) ):
             if not db.has_key( folder['href'] ):
                 print " -- %s: %s" % ( folder.string, folder['href'] )
                 db[folder['href']] = folder.string
@@ -311,7 +316,7 @@ class Chomik:
         if matcher:
             url = matcher.group( 1 )
             name = re.search( '&name=(.*)&', url ).group( 1 )
-            os.system( "wget '%s' -O '%s'" % ( url, name ) )
+            os.system( "wget -c '%s' -O '%s'" % ( url, name ) )
 
     def generate_list( self, count=100, filename="list.txt" ):
         print " -- generating list of %d users to %s" % ( count, filename )
@@ -356,5 +361,19 @@ class Chomik:
             if field.has_key( 'value' ):
                 self.browser[ field['name'] ] = field['value']
 
+
+    def _is_item_done( self, type, item ):
+        try:
+            return item in [ u.strip() for u in open( "db/%s_%s.dat" % ( self.name, type ), 'r' ) ]
+        except Exception:
+            return False
+
+    def _add_item_to_done( self, type, item ):
+        if not os.path.isdir( 'db' ):
+            os.mkdir( 'db' )
+
+        f = open( "db/%s_%s.dat" % ( self.name, type ), 'a' )
+        f.write( '%s\n' % item )
+        f.close()
 
 # vim: fdm=marker ts=4 sw=4 sts=4
