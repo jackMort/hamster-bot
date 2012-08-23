@@ -227,9 +227,15 @@ if __name__ == "__main__":
         if chomik.connect():
             stats = chomik.get_stats()
             print " points: %s" % stats['points']
-            print " files : %s" % stats['files']
             print " size  : %s" % stats['size']
+            print " files : %s" % stats['files']
+            print "  - docs  : %s" % stats['docs']
+            print "  - images: %s" % stats['images']
+            print "  - video : %s" % stats['video']
+            print "  - music : %s" % stats['music']
             print "--------------------------"
+        else:
+            print "Not connected ..."
 
     if options.mkdir:
         if chomik.connect():

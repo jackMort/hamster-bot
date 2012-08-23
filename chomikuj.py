@@ -72,24 +72,21 @@ class Chomik:
     def connect( self ):
         self.browser.open( "http://chomikuj.pl" )
         self.browser.select_form( nr=0 )
-        self.browser["ctl00$LoginTop$LoginChomikName"] = self.name
-        self.browser["ctl00$LoginTop$LoginChomikPassword"] = self.password
+        self.browser["Login"] = self.name
+        self.browser["Password"] = self.password
 
         response = self.browser.submit()
-        text = response.read()
         matcher = re.search( 'Pliki użytkownika (.*) - Chomikuj.pl', self.browser.title() )
         if matcher:
             self.chomik_name = matcher.group( 1 )
-            matcher = re.search( '<input name="ctl00\$CT\$ChomikID" type="hidden" id="ctl00_CT_ChomikID" value="(\d+)" \/>', text )
+            matcher = re.search( '<input id="__accno" name="__accno" type="hidden" value="(\d+)" \/>', response.read() )
             if matcher:
+                self.chomik_md5 = None
                 self.chomik_id = matcher.group( 1 )
-                matcher = re.search( 'ch.ChomikTree.Md5 = \'(.*)\'', text )
-                if matcher:
-                    self.chomik_md5 = matcher.group( 1 )
-                    print "--------------------------"
-                    print " Logged as %s(%s) [%s]" % ( self.chomik_name, self.chomik_id, self.chomik_md5 )
-                    print "--------------------------"
-                    return True
+                print "--------------------------"
+                print " Logged as %s[%s]" % ( self.chomik_name, self.chomik_id )
+                print "--------------------------"
+                return True
         return False
 
     def check_directory( self, url ):
@@ -210,27 +207,30 @@ class Chomik:
 
         return len( db )
 
-    def get_stats( self ):
-        result = {
+    def get_stats( self, name=None ):
+        r = {
             'points': 0,
-            'files': 0,
-            'size': 0
+            'files' : 0,
+            'size'  : 0,
+            # ----
+            'docs'  : 0,
+            'images': 0,
+            'video' : 0,
+            'music' : 0
         }
-        response = self.browser.open( "http://chomikuj.pl/%s" % self.chomik_name )
-        text = response.read()
-        matcher = re.search( '<span id="ctl00_CT_StatsSize"><b>(.*) MB</b></span>', text )
-        if matcher:
-            result['size'] = convert_bytes( float( matcher.group( 1 ).replace( ',', '.' ) ) )
+        if name is None:
+            name = self.chomik_name
+        response = self.browser.open( "http://chomikuj.pl/%s" % name )
+        soup = BeautifulSoup( response.read() )
+        #convert_bytes( float( matcher.group( 1 ).replace( ',', '.' ) ) )
+        fileInfo = soup.find( 'div', { 'class': re.compile( "fileInfoFrame" ) } )
+        files, size = [ o.string for o in fileInfo.p.findAll( 'span' ) ]
+        
+        r['points'] = float( soup.find( 'a', id='topbarPoints' ).strong.string )
+        r['files'] = int( files )
+        r['music'], r['video'], r['images'], r['docs'] = [ int( o.span.string ) for o in fileInfo.findAll( 'li' ) ]
 
-        matcher = re.search( '<span id="ctl00_CT_StatsFilesCount"><b>(.*)</b></span>', text )
-        if matcher:
-            result['files'] = matcher.group( 1 )
-
-        matcher = re.search( '<span id="ctl00_CT_PointsLabel">(.*)</span>', text )
-        if matcher:
-            result['points'] = matcher.group( 1 )
-
-        return result
+        return r
 
     def invite( self, user ):
         print " -- inviting %s" % user
@@ -326,17 +326,19 @@ class Chomik:
             users = [ u.strip() for u in file ]
             file.close()
 
-        response = self.browser.open( "http://chomikuj.pl/services/GetLastSeen.aspx?_=1&maxNum=18&colNum=1&pauseTime=500" )
-        for item in re.findall( '<a class="name" href="\/(.*)"', response.read() ):
+        response = self.browser.open( "http://chomikuj.pl/action/LastAccounts/RecommendedAccounts" )
+        soup = BeautifulSoup( response.read() )
+        for item in soup.findAll( 'a' ):
             if len( users ) >= count:
                 print " -- users list contains %d users [CLOSING]" % len( users )
                 return
-
-            if item in users:
-                print "  -- user %s already exists [SKIPING]" % item
-            else:
-                print "  -- ... %s" % item
-                users.append( item )
+            item = item.string
+            if item is not None:
+                if item in users:
+                    print "  -- user %s already exists [SKIPING]" % item
+                else:
+                    print "  -- ... %s" % item
+                    users.append( item )
 
         file = open( filename, 'w' )
         for u in users:
