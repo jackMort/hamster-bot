@@ -216,9 +216,6 @@ class ChomikServer( object ):
         """
         CREATE TABLE IF NOT EXISTS users ( id INTEGER PRIMARY KEY, chomik_id INT, login TEXT, password TEXT, strategy TEXT );
         CREATE TABLE IF NOT EXISTS folders ( id INTEGER, user_id INTEGER, name TEXT, url TEXT );
-
-        DELETE FROM users;
-        INSERT INTO users VALUES ( 1, 0, 'top_chomik', 'Robinhooj752!', 'film_db' );
         """
         )
 
