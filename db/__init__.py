@@ -1,13 +1,19 @@
 import os
+import sys
 import sqlite3 as lite
+
+if getattr( sys, 'frozen', None ):
+    BASE_DIR = os.path.dirname( sys.executable )
+else:
+    BASE_DIR = os.path.abspath( os.path.dirname( __file__ ) )
 
 class Db( object ):
 
-    BASE_DIR = os.path.abspath( os.path.dirname( __file__ ) )
     DB_NAME = os.path.join( BASE_DIR, 'chomik.db' )
 
     @classmethod
     def get_connection( cls ):
+	print "---------", cls.DB_NAME
         if getattr( cls, '__connection', None ) is None:
             cls.__connection = lite.connect( cls.DB_NAME )
         return cls.__connection
