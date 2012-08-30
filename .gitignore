@@ -4,3 +4,4 @@
 .*.swp
 *-captcha.jpg
 logs/*.log
+tools/samples/to_validate*
