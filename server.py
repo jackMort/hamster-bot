@@ -21,10 +21,11 @@ import time
 import atexit
 import random
 import readline
+import multiprocessing
 
-from threading import Thread
 from termcolor import colored
 from texttable import Texttable
+from imdb.utils import analyze_title
 from colorama import init as colorama_init
 
 from db import Db
@@ -75,10 +76,12 @@ class AInput:  # We can't use input as it is a existent function name, so we use
       return float(self.data)
 
 
-class ChomikThread( Thread ):
-    def __init__( self, id, login, password, strategy ):
-        Thread.__init__( self )
+def run_chomik_thread( *args, **kwargs ):
+    thread = ChomikThread( *args, **kwargs )
+    return thread.run()
 
+class ChomikThread( object ):
+    def __init__( self, id, login, password, strategy ):
         self.id = id
         self.login = login
         self.password = password
@@ -87,32 +90,119 @@ class ChomikThread( Thread ):
         self.chomik = Chomik( login, password )
 
     def run( self ):
-        if self.strategy == 'film_db': #TODO
-            self.chomik.connect()
+        try:
+            if self.strategy == 'film_db': #TODO
+                self.chomik.connect()
 
-            LETTERS = map( chr, range( 65, 91 ) )
-            movies = []
-            
-            file = open( 'db/movies.list', 'r' )
-            for line in file.readlines():
-                title = line.split('\t')[0].decode( 'latin1' )
-                first_letter = title[0]
-                FIRST_LETTER = first_letter.upper()
-                if FIRST_LETTER in LETTERS:
-                    movies.append( title )
-            file.close()
+                movies = []
+                file = open( 'db/movies.list', 'r' )
+                for line in file.readlines():
+                    title = line.split('\t')[0].decode( 'latin1' )
+                    analized = analyze_title( title )
+                    title = analized['title']
 
-        random.shuffle( movies )
-        for title in movies:
-            FIRST_LETTER = title[0].upper()
-            if not server.db.fetchone( "SELECT * FROM folders WHERE user_id=? AND name=?", ( self.id, title ) ):
-                id, url = self.chomik.create_directory( 'Filmy/%s/%s' % ( FIRST_LETTER, title ) )
-                if id and url:
-                    server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
+                    if analized['kind'] in ( 'movie', 'tv series', 'tv movie', 'tv mini series', 'episode' ):
+                        movies.append( analized )
 
+                file.close()
 
-        else:
-            pass
+                random.shuffle( movies )
+                for movie in movies:
+
+                    title = movie['title'].replace( '/', '\\')
+                    year = movie['year'] if movie.has_key( 'year' ) else ''
+
+                    FIRST_LETTER = title[0].upper()
+                    if movie['kind'] == 'episode':
+                        pattern1 = [
+                            'Seriale',
+                            'Alfabetycznie',
+                            movie['episode of']['title'][0].upper(),
+                            movie['episode of']['title'] + ' (%s)' % movie['episode of']['year'] if movie['episode of'].has_key( 'year' ) else '', 
+                        ]
+                        if movie.has_key( 'season' ):
+                            pattern1.append( 'Sezon %s' % movie['season'] )
+                        if movie.has_key( 'episode' ):
+                            pattern1.append( 'Odcinek %s, %s' % ( movie['episode'], movie['title'] ) )
+                        else:
+                            pattern1.append( title )
+                        pattern1 = '/'.join( pattern1 )
+                            
+                        patterns = [ pattern1 ]
+                        if movie['episode of'].has_key( 'year' ):
+                            pattern2 = [
+                                'Seriale',
+                                'Chronologicznie',
+                                str( movie['episode of']['year'] ), 
+                                movie['episode of']['title'] + ' (%s)' % movie['episode of']['year'] if movie['episode of'].has_key( 'year' ) else '', 
+                            ]
+                            if movie.has_key( 'season' ):
+                                pattern2.append( 'Sezon %s' % movie['season'] )
+                            if movie.has_key( 'episode' ):
+                                pattern2.append( 'Odcinek %s, %s' % ( movie['episode'], movie['title'] ) )
+                            else:
+                                pattern2.append( title )
+                            pattern2 = '/'.join( pattern2 )
+                            patterns.append( pattern2 )
+
+                    else:
+                        title = '%s (%s)' % ( title, year ) if year else title
+                        if movie['kind'] in ( 'tv series', 'tv mini series' ):
+                            folder = 'Seriale'
+                        else:
+                            folder = 'Filmy'
+
+                        full_title = ( "%s (%s)" % ( movie['title'], year ) ).decode( 'latin1' )
+                        patterns = ( '%s/Alfabetycznie/%s/%s' % ( folder, FIRST_LETTER, title ), 
+                                     '%s/Chronologicznie/%s/%s' % ( folder, year, title ) 
+                                   )
+
+                    if not server.db.fetchone( "SELECT * FROM folders WHERE user_id=? AND name=?", ( self.id, title ) ):
+
+                        good = []
+                        if movie['kind'] in ( 'movie', 'tv movie' ): # TODO search series
+                            sizes = []
+                            items = self.chomik.search( full_title )
+                            for item in items:
+                                if item['title'].lower() == full_title.lower() or item['title'].lower().startswith( full_title.lower() ) or item['title'].lower() == movie['title'].lower() or item['title'].lower == ( '%s %s' % ( movie['title'], year ) ).lower():
+                                    if not item['size'] in sizes:
+                                        good.append( item )
+                                        sizes.append( item['size'] )
+
+                        for pattern in patterns:
+                            id, url = self.chomik.create_directory( pattern )
+                            if id and url:
+                                server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
+
+                                for item in good:
+                                    self.chomik.clone( item['id'], id )
+
+            elif self.strategy == 'smieciarz':
+                self.chomik.connect()
+
+                users = server.db.fetch( "SELECT login from other_users" )
+                random.shuffle( users )
+                for user in users:
+                    url = '/%s' % user
+                    full_url = 'http://chomikuj.pl/%s%s' % ( self.login, url )
+                    #if not server.db.fetchone( "SELECT * FROM folders WHERE user_id=? AND url=?", ( self.id, full_url ) ):
+                    if not self.chomik.check_directory( url )[0]:
+                        self.chomik.copy_directory_tree( url )
+                        #server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
+
+                while True:
+                    users = self.chomik.generate_list( to_file=False )
+                    for user in users:
+                        if not server.db.fetchone( "SELECT * FROM other_users WHERE login=?", ( user, ) ):
+                            server.db.execute( "INSERT INTO other_users ( login ) VALUES ( ? )", ( user, ), commit=True )
+
+                    time.sleep( 4 )
+
+        except Exception, e:
+            self.chomik.logger.exception( e )
+            self.chomik.logger.info( "going to sleep for 60 seconds" )
+            time.sleep( 60 )
+            return self.run()
 
 
 class CommandError( Exception ):
@@ -124,13 +214,18 @@ class Command( object ):
     FLOAT = 3
 
     ARGS = {}
+    ARGS_ORDER = []
+    DONE = colored( "DONE", 'green', attrs=['bold'] )
+    ERROR = colored( "ERROR", 'red', attrs=['bold'] )
+
     def __init__( self, server, *args ):
         self.server = server
         if len( args ) != len( self.ARGS.keys() ):
-            raise CommandError( "Bad arguments: use %s %s" % ( self.name, self.ARGS.keys() ) )
+            raise CommandError( "Bad arguments: use %s %s" % ( self.name, self.ARGS_ORDER or self.ARGS.keys() ) )
 
         i = 0
-        for name, type in self.ARGS.items():
+        order = self.ARGS_ORDER or self.ARGS.keys()
+        for name in order:
             setattr( self, name, args[i] )
             i += 1
     
@@ -144,7 +239,15 @@ class QuitCommand( Command ):
     name = 'quit'
 
     def execute( self ):
+        for login, thread in self.server.threads.items():
+            print "stopping %s ... " % colored( login, 'blue', attrs=['bold'] )
+            self.server.threads[login].terminate()
+        time.sleep( 1 )
+        print
+        print "GOODBYE ME LITTLE FRIENDOooo !"
         sys.exit( 1 )
+
+
 class ListCommand( Command ):
     name = 'list'
     ARGS = {
@@ -163,29 +266,159 @@ class ListCommand( Command ):
 
 class AddCommand( Command ):
     name = 'add'
+    ARGS_ORDER = ['type', 'login', 'password', 'strategy', 'on_start' ]
     ARGS = {
         'type': Command.TEXT,
-        'name': Command.TEXT,
+        'login': Command.TEXT,
         'password': Command.TEXT,
+        'strategy': Command.TEXT,
+        'on_start': Command.TEXT,
     }
 
     def execute( self ):
-        self.server.db.execute( "INSERT INTO users(login, password) VALUES ('%s', '%s');" % ( self.name, self.password ), commit=True )
-        print "user added!"
+        if not server.db.fetchone( "SELECT * FROM users WHERE login=?", ( self.login, ) ):
+            self.server.db.execute( "INSERT INTO users(login, password, strategy, on_start) VALUES ( ?, ?, ?, ? )", ( self.login, self.password, self.strategy, self.on_start ), commit=True )
 
+            print "user %s added ..." % self.login, self.DONE
+            return True
+        print "user %s already exists ..." % self.login, self.ERROR
+        return False
+
+class StopCommand( Command ):
+    name = 'stop'
+
+    ARGS = {
+        'login': Command.TEXT,
+    }
+
+    def execute( self ):
+        if not self.server.threads.has_key( self.login ):
+            raise CommandError( "Thread '%s' does not exists" % self.login )
+
+        self.server.threads[self.login].terminate()
+        sys.stdout.write ( "stopping %s ... " % self.login )
+        sys.stdout.flush()
+        time.sleep( 2 )
+        sys.stdout.write( self.ERROR if self.server.threads[self.login].is_alive() else self.DONE )
+        sys.stdout.write( "\n" )
+        sys.stdout.flush()
+
+class StartCommand( Command ):
+    name = 'start'
+
+    ARGS = {
+        'login': Command.TEXT,
+    }
+
+    def execute( self ):
+        self.server.start_thread( self.login )
+        sys.stdout.write ( "starting %s ... " % self.login )
+        sys.stdout.flush()
+        time.sleep( 2 )
+        sys.stdout.write( self.ERROR if not self.server.threads[self.login].is_alive() else self.DONE )
+        sys.stdout.write( "\n" )
+        sys.stdout.flush()
+
+class RemoveFromStartCommand( Command ):
+    name = 'remove-on-start'
+
+    ARGS = {
+        'login': Command.TEXT,
+    }
+
+    def execute( self ):
+        if not server.db.fetchone( "SELECT * FROM users WHERE login=?", ( self.login, ) ):
+            print colored( 'user %s does not exit ...', 'red', attrs=['bold'] )
+        else:
+            server.db.execute( 'UPDATE users set on_start=0 WHERE login=?', ( self.login, ), commit=True )
+            print self.DONE
+
+class AddTOStartCommand( Command ):
+    name = 'add-on-start'
+
+    ARGS_ORDER = ['login', 'strategy']
+    ARGS = {
+        'login': Command.TEXT,
+        'strategy': Command.TEXT,
+    }
+
+    def execute( self ):
+        if not server.db.fetchone( "SELECT * FROM users WHERE login=?", ( self.login, ) ):
+            print colored( 'user %s does not exit ...', 'red', attrs=['bold'] )
+        else:
+            server.db.execute( 'UPDATE users set on_start=1, strategy=? WHERE login=?', ( self.strategy, self.login ), commit=True )
+            print self.DONE
+
+class StatusCommand( Command ):
+    name = 'status'
+
+    def execute( self ):
+        alive = colored( "RUNNING", 'green', attrs=[] )
+        dead = colored( "STOPPED", 'red', attrs=[] )
+        for login, user in self.server.users.items():
+            id, login, password, strategy = user
+            is_alive = self.server.threads.has_key( login ) and self.server.threads[login].is_alive()
+            print " `", login, "using strategy:",strategy, "\t", alive if is_alive else dead
+
+class DeleteCommand( Command ):
+    name = 'delete'
+    ARGS_ORDER = ['type', 'id' ]
+    ARGS = {
+        'type': Command.TEXT,
+        'id': Command.TEXT,
+    }
+
+    def execute( self ):
+        self.server.db.execute( "DELETE FROM %s WHERE id = ?" % self.type, ( self.id ), commit=True )
+        print "%s deleted!" % self.type
+
+class LoadUsersCommand( Command ):
+    name = 'load-users'
+    ARGS = {
+        'file': Command.TEXT,
+    }
+
+    def execute( self ):
+        file = open( self.file, 'r' )
+        for line in file.readlines():
+            parts = line.strip().split(':')
+            if len( parts ) < 2:
+                print "skipping line ...", parts
+            else:
+                strategy = 'smieciarz'
+                on_start = 0
+                user = parts[0]
+                password = parts[1]
+                if len( parts ) > 2:
+                    strategy = parts[2]
+                    if len( parts ) > 3:
+                        on_start = parts[3] == '1'
+        
+                success = AddCommand( self.server, 'user', user, password, strategy, on_start ).execute()
+                if success and on_start:
+                    StartCommand( self.server, user ).execute()
+
+        file.close()
 
 
 class ChomikServer( object ):
 
     commands = {
-        'help': HelpCommand,
-        'quit': QuitCommand,
-        'list': ListCommand,
-        'add' : AddCommand,
+        'help'           : HelpCommand,
+        'quit'           : QuitCommand,
+        'list'           : ListCommand,
+        'add'            : AddCommand,
+        'stop'           : StopCommand,
+        'start'          : StartCommand,
+        'status'         : StatusCommand,
+        'load-users'     : LoadUsersCommand,
+        'add-on-start'   : AddTOStartCommand,
+        'remove-on-start': RemoveFromStartCommand,
     }
 
     def __init__( self ):
         self.db = Db
+        self.users = {}
         self.threads = {}
 
     def run( self ):
@@ -196,37 +429,60 @@ class ChomikServer( object ):
         print
 
         self.check_db()
-        users = self.db.fetch( "SELECT * FROM users;" )
+        users = self.db.fetch( "SELECT * FROM users WHERE on_start=1" )
         self.log( "starting background strategy" )
+
         for user in users:
-            id, chomik_id, login, password, strategy = user
-            self.threads[login] = ChomikThread( id, login, password, strategy )
-            self.threads[login].setName( login )
-            self.threads[login].start()
+            id, chomik_id, login, password, strategy, on_start = user
+            self.users[login] = ( id, login, password, strategy )
+            self.start_thread( login )
 
         print 
         while True:
-            command = AInput( "CHOMIK_BOT> ").getString()
-            self.parse_command( command )
+            try:
+                command = AInput( "CHOMIK_BOT> ").getString()
+                self.parse_command( command )
+            except ( KeyboardInterrupt, EOFError ):
+                try:
+                    self.parse_command( 'quit' )
+                except: pass
+            except Exception, e:
+                print colored( "Command error: %s" % e, 'red', attrs=['bold'] )
+
+    def start_thread( self, login ):
+        if self.threads.has_key( login ) and self.threads[login].is_alive():
+            print "%s already runnig ..." % login
+            return
+
+        user = self.db.fetchone( "SELECT * FROM users WHERE login=?", ( login, ) )
+        if user:
+            id, chomik_id, login, password, strategy, on_start = user
+            self.users[login] = ( id, login, password, strategy )
+            self.threads[login] = multiprocessing.Process( target=run_chomik_thread, args=( id, login, password, strategy ) )
+            self.threads[login].start()
+        else:
+            print "user %s not found ..." % login
 
     def check_db( self ):
         self.log( "checking db structure ..." )
 
         self.db.executescript(
         """
-        CREATE TABLE IF NOT EXISTS users ( id INTEGER PRIMARY KEY, chomik_id INT, login TEXT, password TEXT, strategy TEXT );
+        CREATE TABLE IF NOT EXISTS users ( id INTEGER PRIMARY KEY, chomik_id INT, login TEXT, password TEXT, strategy TEXT, on_start INT );
         CREATE TABLE IF NOT EXISTS folders ( id INTEGER, user_id INTEGER, name TEXT, url TEXT );
+        CREATE TABLE IF NOT EXISTS other_users ( id INTEGER PRIMARY KEY, login TEXT );
         """
         )
 
     def parse_command( self, command ):
         parts = command.split()
-        command, args = parts[0], parts[1:]
-        if command:
-            if command in self.commands.keys():
-                self.commands[command]( self, *args ).execute()
-            else:
-                print colored( " Unknown command [%s] ..." % command, 'red', attrs=['bold'] )
+        if len( parts ):
+            command, args = parts[0], parts[1:]
+            if command:
+                if command in self.commands.keys():
+                    self.commands[command]( self, *args ).execute()
+                else:
+                    print colored( "Unknown command [%s] ..." % command, 'red', attrs=['bold'] )
 
     def log( self, msg ):
         print " --- %s" % msg

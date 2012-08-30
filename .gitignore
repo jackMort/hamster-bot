@@ -2,3 +2,5 @@
 *.pyc
 *.pyo
 .*.swp
+*-captcha.jpg
+logs/*.log
