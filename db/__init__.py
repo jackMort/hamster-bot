@@ -1,9 +1,14 @@
 import os
+import sys
 import sqlite3 as lite
+
+if getattr( sys, 'frozen', None ):
+    BASE_DIR = os.path.dirname( sys.executable )
+else:
+    BASE_DIR = os.path.abspath( os.path.dirname( __file__ ) )
 
 class Db( object ):
 
-    BASE_DIR = os.path.abspath( os.path.dirname( __file__ ) )
     DB_NAME = os.path.join( BASE_DIR, 'chomik.db' )
 
     @classmethod

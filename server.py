@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Copyright (C) 2011  lech.twarog@gmail.com
@@ -34,6 +35,10 @@ from chomikuj import Chomik, CaptchNeededException
 
 # INIT CONSOLE
 colorama_init()
+
+if not os.environ.has_key('HOME'):
+    os.environ['HOME'] = os.path.join(os.environ['HOMEDRIVE'], \
+                                           os.environ['HOMEPATH'])
 
 history_file = os.path.join(os.environ['HOME'], '.chomik_history')
 try:
