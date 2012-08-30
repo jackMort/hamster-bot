@@ -45,22 +45,23 @@ if __name__ == "__main__":
     
     chomik = Chomik( options.username, options.password )
     chomik.connect()
-    chomik.create_directory( 'Filmy' )
 
-    LETTERS = map( chr, range( 65, 91 ) )
-    movies = []
+    good = []
+    sizes = []
+    full_title = "Company (2002)"
+    year = "2002"
+    title = "Company"
+    items = chomik.search( full_title )
+    for item in items:
+        if item['title'] == full_title or item['title'] == title or item['title'] == '%s %s' % ( title, year ):
+            if not item['size'] in sizes:
+                good.append( item )
+                sizes.append( item['size'] )
+
+    for g in good:
+        print g['id']
+        chomik.clone( g['id'], 2783 )
+
     
-    file = open( 'db/movies.list', 'r' )
-    for line in file.readlines():
-        title = line.split('\t')[0]
-        first_letter = title[0]
-        FIRST_LETTER = first_letter.upper()
-        if FIRST_LETTER in LETTERS:
-            movies.append( title )
-            print title
-            chomik.create_directory( 'Filmy/%s' % FIRST_LETTER )
-            chomik.create_directory( 'Filmy/%s/%s' % ( FIRST_LETTER, title ) )
-
-    file.close()
-
+    #chomik.search( "Drop Zone (1994)" )
 # vim: fdm=marker ts=4 sw=4 sts=4

@@ -22,17 +22,21 @@ sys.setdefaultencoding( 'utf-8' )
 import os
 import re
 import time
+import json
 import string
 import random
 import urllib
 import urllib2
 import logging
+import collections
 from mechanize import Browser, LinkNotFoundError, HTMLForm
 from BeautifulSoup import BeautifulSoup
 
-#logger = logging.getLogger( 'mechanize' )
-#logger.addHandler( logging.StreamHandler( sys.stderr ) )
-#logger.setLevel( logging.DEBUG )
+import logging
+logging.basicConfig(filename='example.log',level=logging.DEBUG)
+logging.debug('This message should go to the log file')
+logging.info('So should this')
+logging.warning('And this, too')
 
 HTML_TAGS_PATTERN = re.compile( r'<.*?>' )
 WHITE_SPACES_PATTERN = re.compile( r'\s+' )
@@ -67,59 +71,87 @@ class CaptchNeededException( Exception ):
 
 class Chomik:
     def __init__( self, name, password ):
+        self.logger = logging.getLogger( name )
+        self.logger.setLevel( logging.DEBUG )
+
+        formatter = logging.Formatter( '%(asctime)s - %(name)s - %(levelname)s - %(message)s' )
+
+        handler = logging.FileHandler( os.path.join( 'logs', '%s.log' % name ) )
+        handler.setFormatter( formatter )
+        self.logger.addHandler( handler )
+
         self.name = name
         self.password = password
+        self.chomik_id = None
         self.browser = Browser()
         self.browser.set_handle_robots( False )
         self._cached_directories = {}
+        self.captcha = None
+        self.captcha_attempt = 0
+        self.captcha_latest = []
 
     def connect( self ):
-        self.browser.open( "http://chomikuj.pl" )
-        self.browser.select_form( nr=0 )
-        self.browser["Login"] = self.name
-        self.browser["Password"] = self.password
+        if not self.chomik_id:
+            self.browser = Browser()
+            self.browser.set_handle_robots( False )
+            self.browser.open( "http://chomikuj.pl" )
+            self.browser.select_form( nr=0 )
+            self.browser["Login"] = self.name
+            self.browser["Password"] = self.password
 
-        response = self.browser.submit()
-        matcher = re.search( 'Pliki użytkownika (.*) - Chomikuj.pl', self.browser.title() )
-        if matcher:
-            self.chomik_name = matcher.group( 1 )
-            matcher = re.search( '<input id="__accno" name="__accno" type="hidden" value="(\d+)" \/>', response.read() )
+            response = self.browser.submit()
+            matcher = re.search( 'Pliki użytkownika (.*) - Chomikuj.pl', self.browser.title() )
             if matcher:
-                self.chomik_md5 = None
-                self.chomik_id = matcher.group( 1 )
-                #print "--------------------------"
-                #print " Logged as %s[%s]" % ( self.chomik_name, self.chomik_id )
-                #print "--------------------------"
-                return True
-        return False
+                self.chomik_name = matcher.group( 1 )
+                matcher = re.search( '<input id="__accno" name="__accno" type="hidden" value="(\d+)" \/>', response.read() )
+                if matcher:
+                    self.chomik_md5 = None
+                    self.chomik_id = matcher.group( 1 )
+                    return True
+            return False
+        return True
+
+    def diconnect( self ):
+        if self.chomik_id:
+            self._create_form( 'http://chomikuj.pl/action/Login/LogOut', [
+                { 'name': 'redirect', 'type': 'hidden', 'value': '/%s' % self.chomik_name, 'args': {} },
+                { 'name': 'logout.x', 'type': 'hidden', 'value': '4', 'args': {} },
+                { 'name': 'logout.y', 'type': 'hidden', 'value': '10', 'args': {} },
+            ])
+
+            self.browser.submit()
+            self.chomik_id = self.chomik_name = None
+        return True
 
     def check_directory( self, url ):
-        #print "  -- checking %s" % url
+        name = url.split( '/' )[-1]
         url = url if url.startswith( '/' ) else "/%s" % url
         if self._cached_directories.has_key( url ):
             return self._cached_directories[url], url
 
         url = '/'.join( [ urllib.quote_plus( p.encode( 'utf-8' ) ) for p in url.split('/') ] )
         full_url = "http://chomikuj.pl/%s%s" % ( self.chomik_name, url )
+        full_url = full_url.replace( '%', '*' )
 
         response = self.browser.open( full_url )
         text = response.read()
 
         soup = BeautifulSoup( text )
-        self.token = soup.find( 'input', { 'name': '__RequestVerificationToken' })['value']
-        #print self.token
+        self.token = str( soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] )
+        if not self.token:
+            self.check_directory( url )
 
-        matcher = re.search( '<input type="text" value="(.*)" style="display: none" id="FolderAddress">', text )
-        if matcher:
-            absolute_url = matcher.group( 1 )
-            parts = absolute_url.split('/')
-            name = parts[-1].replace( '*', '%' ).replace( '(', '%28' ).replace( ')', '%29' )
-            if len( parts ) > 4  and full_url.endswith( name ):
+        try:
+            title = soup.find( 'div', { 'class': 'frameHeaderNoImage frameHeader borderTopRadius' } ).h1.a.string
+            if name == title:
                 form = soup.find( 'form', id='FileListForm' )
                 id = form.find( 'input', { 'name': 'folderId' } )['value']
 
                 self._cached_directories[url] = id
                 return id, full_url
+        except:
+            pass
+
         return None, None
 
     def remove_directory( self, url ):
@@ -136,88 +168,201 @@ class Chomik:
             return re.search( 'został usunięty', response.read() )
         return None
 
+
+    CHAR_MAP = {
+        '\\': '&#92;',
+        '/' : '&#48;',
+        '*' : '&#42;',
+        '?' : '&#63;',
+        '"' : '&#34;',
+        '<' : '&#60;',
+        '>' : '&#62;',
+        '|' : '&#124;',
+        '.' : '&#46;',
+    }
     def create_directory( self, url ):
         url = url[1:] if url.startswith( '/' ) else url
         folder_id = "0"
         dir_route = []
         for folder in url.split( '/' ):
+            for ch, code in self.CHAR_MAP.items():
+                folder = folder.replace( ch, code )
             dir_route.append( folder )
             dir_id, full_url = self.check_directory( '/'.join( dir_route ) )
             if dir_id is not None:
                 folder_id = dir_id
                 continue
 
-            self._create_form( 'http://chomikuj.pl/action/FolderOptions/NewFolderAction', [
-                { 'name': 'FolderId', 'type': 'hidden', 'value': folder_id, 'args': {} },
-                { 'name': 'ChomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
-                { 'name': 'FolderName', 'type': 'text', 'value': folder, 'args': {} },
-                { 'name': 'AdultContent', 'type': 'text', 'value': "false", 'args': {} },
-                { 'name': 'Password', 'type': 'text', 'value': "", 'args': {} },
-                { 'name': '__RequestVerificationToken', 'type': 'text', 'value': self.token, 'args': {} },
-            ])
+            if folder and folder_id:
+                self._create_form( 'http://chomikuj.pl/action/FolderOptions/NewFolderAction', [
+                    { 'name': 'FolderId', 'type': 'hidden', 'value': folder_id, 'args': {} },
+                    { 'name': 'ChomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
+                    { 'name': 'FolderName', 'type': 'text', 'value': folder, 'args': {} },
+                    { 'name': 'AdultContent', 'type': 'text', 'value': "false", 'args': {} },
+                    { 'name': 'Password', 'type': 'text', 'value': "", 'args': {} },
+                    { 'name': '__RequestVerificationToken', 'type': 'text', 'value': self.token, 'args': {} },
+                ])
 
-            self.browser.submit()
-            folder_id, full_url = self.check_directory( '/'.join( dir_route ).decode( 'latin1' ) )
+                response = self.browser.submit()
+                folder_id, full_url = self.check_directory( '/'.join( dir_route ).decode( 'latin1' ) )
 
         return folder_id, full_url
 
-    def copy_directory_tree( self, url, db=None ):
+    def copy_directory_tree( self, url, db=None, captcha='' ):
         if db is None:
             db = {}
 
-        url = url if url.startswith( '/' ) else "/%s" % url
-        response = self.browser.open( "http://chomikuj.pl%s" % url )
-        text = response.read()
-        regex = re.compile( "</'", re.IGNORECASE )
-        text = regex.sub( "<\/'", text )
-        soup = BeautifulSoup( text )
+        full_url = '/'.join( [ urllib.quote_plus( p.encode( 'utf-8' ) ) for p in url.split('/') ] )
+        response = self.browser.open( "http://chomikuj.pl%s" % full_url )
 
-        user_id, directory_id = None, None
-        for button in soup.findAll( onclick=re.compile( "ch.CopyFilesAndFolders.ShowCopyFolderWindow\(.*\);" ) ):
-            matcher = re.search( 'ch.CopyFilesAndFolders.ShowCopyFolderWindow\((\d+), (\d+)\);', button['onclick'] )
-            user_id, directory_id = matcher.groups()
+        soup = BeautifulSoup( response.read() )
+        self.token = soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] # TODO
 
-        if self._is_item_done( 'copy', url ):
-            #print " -- url %s done [SKIPING]" % url
-            pass
+        directory_id = soup.find( 'input', { 'name': 'FolderId' } )['value']
+        user_id = soup.find( 'input', { 'name' :'__accno' } )['value']
+        private = soup.find( 'table', { 'class':'LoginToFolderForm' } ) is not None
+        disabled = soup.find( 'a', { 'class': 'button disabled bigButton copyFolderButton' } )
+        
+        if private:
+            self.logger.info( "%s, is private skipping ..." % full_url )
+            return db
+ 
+        if disabled:
+            self.logger.info( "%s, coping folders disabled ..." % full_url )
+            return db
 
-        elif user_id and directory_id:
-            if not db.has_key( url ) or db[url] is None:
-                db[url] = url.split( '/' )[:1][0]
+        folder_id, folder_url = self.check_directory( url )
+        if folder_id is None:
+            if user_id and directory_id:
+                if not db.has_key( url ) or db[url] is None:
+                    db[url] = url.split( '/' )[-1]
 
-            #print " -- cloning directory [%s] %s, %s" % ( db[url], user_id, directory_id )
-            folder_id = self.create_directory( url )
+                self.logger.info( "cloning directory [%s] %s, %s" % ( db[url], user_id, directory_id ) )
+                folder_id = '0'
+                parent = '/'.join( url.split( '/' )[:-1] )
+                if parent:
+                    folder_id, folder_url = self.check_directory( parent )
 
-            self._create_form( 'http://chomikuj.pl/Chomik/Content/Copy/CopyFolder', [
-                { 'name': 'chosenFolder.ChomikId', 'type': 'hidden', 'value': user_id, 'args': {} },
-                { 'name': 'chosenFolder.FolderId', 'type': 'hidden', 'value': directory_id, 'args': {} },
-                { 'name': 'chosenFolder.Name', 'type': 'text', 'value': db[url], 'args': {} },
-                { 'name': 'SelectedFolderId', 'type': 'text', 'value': folder_id, 'args': {} },
-                { 'name': 'SelectTreeChomikId', 'type': 'text', 'value': self.chomik_id, 'args': {} },
-                { 'name': 'SelectTreeMd5', 'type': 'text', 'value': self.chomik_md5, 'args': {} },
-                { 'name': 'cfSubmitBtn', 'type': 'submit', 'args': {} },
-            ])
+                self._create_form( 'http://chomikuj.pl/action/content/copy/CopyFolder', [
+                    { 'name': 'chosenFolder.ChomikId', 'type': 'hidden', 'value': user_id, 'args': {} },
+                    { 'name': 'chosenFolder.FolderId', 'type': 'hidden', 'value': directory_id, 'args': {} },
+                    { 'name': 'chosenFolder.Name', 'type': 'text', 'value': db[url], 'args': {} },
+                    { 'name': 'SelectedFolderId', 'type': 'text', 'value': folder_id, 'args': {} },
+                    { 'name': 'ChomikId', 'type': 'text', 'value': self.chomik_id, 'args': {} },
+                    { 'name': 'recaptcha_response_field', 'type': 'text', 'value': captcha, 'args': {} },
+                    { 'name': '__RequestVerificationToken', 'type': 'hidden', 'value': self.token, 'args': {} },
+                ])
 
-            response = self.browser.submit()
-            matcher = re.search( 'Folder został zachomikowany', response.read() )
-            if matcher:
-                #print " -- ZACHOMIKOWANO"
-                pass
-            else:
-                pass
-                #print " ------------------------------"
-                #print " -- NIE ZACHOMIKOWANO KUUURWA !"
-                #print " ------------------------------"
-            
-            self._add_item_to_done( 'copy', url )
+                response = self.browser.submit()
+                text = response.read()
+                try:
+                    result = json.loads( text )
+                    self.logger.debug( result['isSuccess'], result['Content'] )
+                except:
+                    pass
+                if "Folder został zachomikowany" in text:
+                    self.logger.info( "%s, zachomikowany ..." % full_url )
+                    self.captcha_attempt = 0
+                    self.captcha_latest = []
+                else:
+                    inner_soup = BeautifulSoup( text )
+                    captcha = inner_soup.find( 'img', { 'alt': 'captcha' } )
+                    if captcha:
+                        captcha = self.read_captcha( captcha['src'] )
+                        if captcha:
+                            self.logger.info( "trying with captcha: %s" % captcha )
+                            self.captcha_attempt += 1
+                            return self.copy_directory_tree( url, db, captcha )
+                        else:
+                            raise NeedCaptcha()
+                    else:
+                        self.logger.debug( "copy error response: %s" % text )
 
-        for folder in soup.findAll( onclick=re.compile( "return Ts\(.*" ), href=re.compile( "%s/.*" % re.escape( url ) ) ):
-            if not db.has_key( folder['href'] ):
-                #print " -- %s: %s" % ( folder.string, folder['href'] )
-                db[folder['href']] = folder.string
-                self.copy_directory_tree( folder['href'], db )
+        div = soup.find( 'div', { 'id': 'foldersList' } )
+        if div:
+            for a in div.findAll( 'a' ):
+                db[a['href']] = a['title']
+                self.copy_directory_tree( '%s/%s' % ( url, a['title'] ), db )
 
-        return len( db )
+        return db
+
+    def read_captcha( self, captcha_src ):
+        
+        if self.captcha_attempt >= 3:
+            self.logger.info( "diconnecting for new captcha ..." )
+            self.diconnect()
+            self.connect()
+            self.captcha = None
+            self.captcha_attempt = 0
+            self.captcha_latest = []
+
+        self.captcha_latest = filter ( lambda a: a != self.captcha, self.captcha_latest )
+
+        captcha_url = "http://chomikuj.pl%s" % captcha_src
+        captcha_filename = "%s-captcha.jpg" % self.chomik_id
+
+        count = 0
+        while count < 10:
+            self.logger.debug( "READING CAPTCHA, ATTEMPT: %s" % self.captcha_attempt )
+
+            file = open( captcha_filename, mode='wb' )
+            file.write( self.browser.open_novisit( captcha_url ).read() )
+            file.close()
+
+            from tools.captcha import read_captcha
+            captcha = read_captcha( captcha_filename )
+            if captcha and len( captcha ) == 5:
+                self.captcha_latest.append( captcha )
+
+            count+=1
+            most_common = collections.Counter( self.captcha_latest ).most_common()
+            self.logger.debug( '%s, %s' % (count, most_common ) )
+
+        if len( most_common ) and most_common[0][1] >= 2:
+            captcha = most_common[0][0]
+        else:
+            captcha = len( self.captcha_latest ) and self.captcha_latest[0]
+
+        self.captcha = captcha
+        return captcha
+
+    def search( self, query, type='Video' ):
+        page = 0
+        results = []
+        has_next = True
+
+        while has_next:
+            page += 1
+            response = self.browser.open( 'http://chomikuj.pl/action/SearchFiles?FileName=%s&FileType=%s&Page=%d' % ( urllib.quote_plus( query.encode( 'utf-8' ) ), type, page ) )
+
+            soup = BeautifulSoup( response.read() )
+            self.token = soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] # TODO
+
+            has_next = page < 3 and soup.find( 'a', { 'class': 'right' } )
+
+            for div in soup.findAll( 'div', { 'class': 'filerow fileItemContainer' } ):
+                a = div.find( 'a', { 'class': 'expanderHeader downloadAction'} )
+                id = div.find( 'div', { 'class': 'fileActionsButtons clear visibleButtons  fileIdContainer' } )['rel']
+                size = div.find( 'ul', { 'class': 'borderRadius tabGradientBg' } ).li.span.string
+                results.append( dict( title=a['title'], id=id, url="http://chomikuj.pl%s" % a['href'], size=size ) )
+
+        return results
+
+    def clone( self, file_id, folder_id ):
+        if not self.token:
+            self.search( 'asdsd asd asd as da sdasd' )#TODO
+        time.sleep( 2 )
+        self._create_form( 'http://chomikuj.pl/action/content/copy/CopyFile', [
+            { 'name': 'ChomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
+            { 'name': 'chosenFile.FileId', 'type': 'hidden', 'value': str( file_id ), 'args': {} },
+            { 'name': 'chosenFile.FolderSelection', 'type': 'text', 'value': '2', 'args': {} },
+
+            { 'name': 'SelectedFolderId', 'type': 'text', 'value': str( folder_id ), 'args': {} },
+            { 'name': '__RequestVerificationToken', 'type': 'hidden', 'value': self.token, 'args': {} },
+        ])
+
+        response = self.browser.submit()
+        print response.read()
 
     def get_stats( self, name=None ):
         r = {
@@ -334,13 +479,14 @@ class Chomik:
             name = re.search( '&name=(.*)&', url ).group( 1 )
             os.system( "wget -c '%s' -O '%s'" % ( url, name ) )
 
-    def generate_list( self, count=100, filename="list.txt" ):
+    def generate_list( self, count=100, to_file=True, filename="list.txt" ):
         print " -- generating list of %d users to %s" % ( count, filename )
         users = []
-        file = open( filename, 'r' )
-        if file:
-            users = [ u.strip() for u in file ]
-            file.close()
+        if to_file:
+            file = open( filename, 'r' )
+            if file:
+                users = [ u.strip() for u in file ]
+                file.close()
 
         response = self.browser.open( "http://chomikuj.pl/action/LastAccounts/RecommendedAccounts" )
         soup = BeautifulSoup( response.read() )
@@ -356,15 +502,18 @@ class Chomik:
                     print "  -- ... %s" % item
                     users.append( item )
 
-        file = open( filename, 'w' )
-        for u in users:
-            file.write( "%s\n" % u )
-        file.close()
+        if to_file:
+            file = open( filename, 'w' )
+            for u in users:
+                file.write( "%s\n" % u )
+            file.close()
 
-        if len( users ) < count:
-            print "  -- we already have %d [CONTINUE]" % len( users )
-            time.sleep( 10 )
-            return self.generate_list( count, filename )
+            if len( users ) < count:
+                print "  -- we already have %d [CONTINUE]" % len( users )
+                time.sleep( 10 )
+                return self.generate_list( count, filename )
+        else:
+            return users
 
     def _create_form( self, url, fields, method='POST' ):
         self.browser._factory.is_html = True
