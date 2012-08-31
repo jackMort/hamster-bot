@@ -162,7 +162,7 @@ class ChomikThread( object ):
                                      '%s/Chronologicznie/%s/%s' % ( folder, year, title ) 
                                    )
 
-                    if not server.db.fetchone( "SELECT * FROM folders WHERE user_id=? AND name=?", ( self.id, title ) ):
+                    if not Db.fetchone( "SELECT * FROM folders WHERE user_id=? AND name=?", ( self.id, title ) ):
 
                         good = []
                         if movie['kind'] in ( 'movie', 'tv movie' ): # TODO search series
@@ -177,7 +177,7 @@ class ChomikThread( object ):
                         for pattern in patterns:
                             id, url = self.chomik.create_directory( pattern )
                             if id and url:
-                                server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
+                                Db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
 
                                 for item in good:
                                     self.chomik.clone( item['id'], id )
@@ -187,7 +187,7 @@ class ChomikThread( object ):
 
                 self.generate_other_users()
 
-                users = server.db.fetch( "SELECT login from other_users" )
+                users = Db.fetch( "SELECT login from other_users" )
                 random.shuffle( users )
                 for user in users:
                     url = '/%s' % user
@@ -198,6 +198,7 @@ class ChomikThread( object ):
                         #server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
 
         except Exception, e:
+            print e
             self.chomik.logger.exception( e )
             self.chomik.logger.info( "going to sleep for 60 seconds" )
             time.sleep( 60 )
@@ -207,8 +208,8 @@ class ChomikThread( object ):
     def generate_other_users( self, limit=10 ):
         users = self.chomik.generate_list( limit, to_file=False )
         for user in users if users else []:
-            if not server.db.fetchone( "SELECT * FROM other_users WHERE login=?", ( user, ) ):
-                server.db.execute( "INSERT INTO other_users ( login ) VALUES ( ? )", ( user, ), commit=True )
+            if not Db.fetchone( "SELECT * FROM other_users WHERE login=?", ( user, ) ):
+                Db.execute( "INSERT INTO other_users ( login ) VALUES ( ? )", ( user, ), commit=True )
 
 
 class CommandError( Exception ):

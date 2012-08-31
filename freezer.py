@@ -29,13 +29,17 @@ f=bbfreeze.Freezer("Hamster Bot 2.0",
 		"HTMLParser", 
 		"inspect",
 		"robotparser",
+		"xml.sax",
+		"scipy.sparse.csgraph.*",
 	), 
     excludes=())
 f.addScript("server.py")
+f.addScript("tools/captcha.py")
 distdir = f.distdir
 f()
-  
-shutil.copyfile( os.path.join( os.getcwd(), "db/chomik.db" ), os.path.join( distdir, "chimik.db" ) )
+
+os.mkdir( os.path.join( distdir, "logs" ) )
+shutil.copyfile( os.path.join( os.getcwd(), "db/chomik.db" ), os.path.join( distdir, "chomik.db" ) )
 #shutil.copytree(os.path.join(os.getcwd(), "bauk"), os.path.join(distdir, "bauk"))
 #shutil.copytree(os.path.join(os.getcwd(), "liblouis"), os.path.join(distdir, "liblouis"))
 
