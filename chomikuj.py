@@ -489,7 +489,7 @@ class Chomik:
         soup = BeautifulSoup( response.read() )
         for item in soup.findAll( 'a' ):
             if len( users ) >= count:
-                return
+                return users
             item = item.string
             if item is not None:
                 if not item in users:
