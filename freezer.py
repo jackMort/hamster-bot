@@ -39,6 +39,7 @@ distdir = f.distdir
 f()
 
 os.mkdir( os.path.join( distdir, "logs" ) )
+os.mkdir( os.path.join( distdir, "resources" ) )
 shutil.copyfile( os.path.join( os.getcwd(), "db/chomik.db" ), os.path.join( distdir, "chomik.db" ) )
 #shutil.copytree(os.path.join(os.getcwd(), "bauk"), os.path.join(distdir, "bauk"))
 #shutil.copytree(os.path.join(os.getcwd(), "liblouis"), os.path.join(distdir, "liblouis"))

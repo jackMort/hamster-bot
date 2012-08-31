@@ -121,6 +121,7 @@ Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\win32evtlog.py
 Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\win32pdh.pyd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\win32pipe.pyd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\logs"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\resources"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\numpy-1.6.2-py2.7-win32.egg\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "C:\Users\pc\Documents\GitHub\hamster-bot\Hamster Bot 2.0\pil-1.1.7-py2.7-win32.egg\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
