@@ -16,6 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import gc
 import sys
 import time
 import atexit
@@ -184,6 +185,8 @@ class ChomikThread( object ):
             elif self.strategy == 'smieciarz':
                 self.chomik.connect()
 
+                self.generate_other_users()
+
                 users = server.db.fetch( "SELECT login from other_users" )
                 random.shuffle( users )
                 for user in users:
@@ -194,19 +197,18 @@ class ChomikThread( object ):
                         self.chomik.copy_directory_tree( url )
                         #server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
 
-                while True:
-                    users = self.chomik.generate_list( to_file=False )
-                    for user in users:
-                        if not server.db.fetchone( "SELECT * FROM other_users WHERE login=?", ( user, ) ):
-                            server.db.execute( "INSERT INTO other_users ( login ) VALUES ( ? )", ( user, ), commit=True )
-
-                    time.sleep( 4 )
-
         except Exception, e:
             self.chomik.logger.exception( e )
             self.chomik.logger.info( "going to sleep for 60 seconds" )
             time.sleep( 60 )
-            return self.run()
+
+            self.run()
+
+    def generate_other_users( self, limit=10 ):
+        users = self.chomik.generate_list( limit, to_file=False )
+        for user in users if users else []:
+            if not server.db.fetchone( "SELECT * FROM other_users WHERE login=?", ( user, ) ):
+                server.db.execute( "INSERT INTO other_users ( login ) VALUES ( ? )", ( user, ), commit=True )
 
 
 class CommandError( Exception ):
@@ -224,13 +226,20 @@ class Command( object ):
 
     def __init__( self, server, *args ):
         self.server = server
-        if len( args ) != len( self.ARGS.keys() ):
+        all_args = []
+        required_args = []
+        for a, o in self.ARGS.items():
+            if not isinstance( o, dict ) or not o.has_key( 'default' ):
+                required_args.append( a )
+            all_args.append( a )
+        
+        if len( args ) != len( required_args ) and len( args ) != len( all_args ):
             raise CommandError( "Bad arguments: use %s %s" % ( self.name, self.ARGS_ORDER or self.ARGS.keys() ) )
 
         i = 0
         order = self.ARGS_ORDER or self.ARGS.keys()
         for name in order:
-            setattr( self, name, args[i] )
+            setattr( self, name, args[i] if len( args ) >= i+1 else self.ARGS[name].get( 'default', None ) )
             i += 1
     
     def execute( self ):
@@ -364,6 +373,13 @@ class StatusCommand( Command ):
             is_alive = self.server.threads.has_key( login ) and self.server.threads[login].is_alive()
             print " `", login, "using strategy:",strategy, "\t", alive if is_alive else dead
 
+
+class ClearMemoryCommand( Command ):
+    name = 'clear-memory'
+
+    def execute( self ):
+        print gc.collect()
+
 class DeleteCommand( Command ):
     name = 'delete'
     ARGS_ORDER = ['type', 'id' ]
@@ -404,8 +420,40 @@ class LoadUsersCommand( Command ):
 
         file.close()
 
+class UserStatsCommand( Command ):
+    name = 'user-stats'
+    ARGS = {
+        'login': { 'default': None, 'type': Command.TEXT }
+    }
+
+    def execute( self ):
+        if self.login:
+            user = self.server.db.fetchone( 'SELECT login, password FROM users WHERE login=?', ( self.login, ) )
+            if user:
+                users = [ user ]
+            else:
+                raise CommandError( "User %s does not exist" % self.login )
+
+        else:
+            users = self.server.db.fetch( 'SELECT login, password FROM users' )
+
+        for user in users:
+            print "fetching stats for user %s ..." % colored( user[0], 'green', attrs=['bold'] )
+            chomik = Chomik( user[0], user[1] )
+            if chomik.connect():
+                stats = chomik.get_stats()
+                print
+                print "  -- points: %s" % colored( stats['points'], 'yellow', attrs=['bold', 'underline'] )
+                print "  -- size  : %s" % colored( stats['size'], 'yellow', attrs=['bold', 'underline'] )
+                print "  -- files : %s" % colored( stats['files'], 'yellow', attrs=['bold', 'underline'] )
+                print
+            else:
+                print colored( "Error cannot connect ...", 'red', attrs=['bold'] )
+            
 
 class ChomikServer( object ):
+
+    PROMPT = "%s> " % colored( "CHOMIK_BOT", "white", attrs=['bold'] )
 
     commands = {
         'help'           : HelpCommand,
@@ -418,6 +466,8 @@ class ChomikServer( object ):
         'load-users'     : LoadUsersCommand,
         'add-on-start'   : AddTOStartCommand,
         'remove-on-start': RemoveFromStartCommand,
+        'user-stats'     : UserStatsCommand,
+        'clear-memory'   : ClearMemoryCommand,
     }
 
     def __init__( self ):
@@ -425,11 +475,14 @@ class ChomikServer( object ):
         self.users = {}
         self.threads = {}
 
+        multiprocessing.freeze_support()
+
     def run( self ):
         print
-        print "####################################"
-        print "#         HAMSTER BOT v 2.0        #"
-        print "####################################"
+        print colored( "####################################", 'white', attrs=['bold'] )
+        print colored( "#         HAMSTER BOT v 2.0        #", 'white', attrs=['bold'] )
+        print colored( "####################################", 'white', attrs=['bold'] )
+
         print
 
         self.check_db()
@@ -444,7 +497,7 @@ class ChomikServer( object ):
         print 
         while True:
             try:
-                command = AInput( "CHOMIK_BOT> ").getString()
+                command = AInput( self.PROMPT ).getString()
                 self.parse_command( command )
             except ( KeyboardInterrupt, EOFError ):
                 try:

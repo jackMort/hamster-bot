@@ -477,7 +477,7 @@ class Chomik:
             os.system( "wget -c '%s' -O '%s'" % ( url, name ) )
 
     def generate_list( self, count=100, to_file=True, filename="list.txt" ):
-        print " -- generating list of %d users to %s" % ( count, filename )
+        self.logger.info( "generating list of users" )
         users = []
         if to_file:
             file = open( filename, 'r' )
@@ -489,14 +489,11 @@ class Chomik:
         soup = BeautifulSoup( response.read() )
         for item in soup.findAll( 'a' ):
             if len( users ) >= count:
-                print " -- users list contains %d users [CLOSING]" % len( users )
                 return
             item = item.string
             if item is not None:
-                if item in users:
-                    print "  -- user %s already exists [SKIPING]" % item
-                else:
-                    print "  -- ... %s" % item
+                if not item in users:
+                    self.logger.debug( " adding user %s" % item )
                     users.append( item )
 
         if to_file:
@@ -506,7 +503,6 @@ class Chomik:
             file.close()
 
             if len( users ) < count:
-                print "  -- we already have %d [CONTINUE]" % len( users )
                 time.sleep( 10 )
                 return self.generate_list( count, filename )
         else:

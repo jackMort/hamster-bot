@@ -185,7 +185,7 @@ def read_captcha( file ):
 
             dt = misc.fromimage( im )
 
-            filename = 'tools/samples/to_validate-%d.png' % i
+            filename = 'tools/samples/%s-%d.png' % ( file, i )
             im = misc.toimage( dt )
             im.save( filename )
 
