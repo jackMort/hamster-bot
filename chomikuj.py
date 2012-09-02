@@ -387,6 +387,77 @@ class Chomik:
 
         return r
 
+    def transfer( self, to, points=None ):
+
+        my_points = self.get_stats()['points']
+        max_points = self.max_points_to_transfer( my_points )
+        if not points:
+            points = max_points
+        
+        self.logger.debug( 'transfering %s points to %s ( max points: %s )  ...' % ( points, to, max_points ) )
+
+        if points > max_points:
+            raise AttributeError( "Your points %s, max points %s to transfer" % ( my_points, max_points ) )
+        
+        if points < 100:
+            raise AttributeError( "Your points %s, min point to transfer is 100" % ( my_points, ) )
+
+        points = int( points )
+        print " --- transfering %s points to %s" % ( points, to )
+
+        # 1 fetch token
+        self._create_form( 'http://chomikuj.pl/Punkty.aspx', [
+            { 'name': 'ctl00$SM', 'type': 'hidden', 'value': 'ctl00$CT$upPoints|ctl00$CT$btnTransferSubmit', 'args': {} },
+            { 'name': 'PageCmd', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': 'PageArg', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': 'ctl00$CT$txtChomik', 'type': 'hidden', 'value': to, 'args': {} },
+            { 'name': 'ctl00$CT$txtTitle', 'type': 'hidden', 'value': 'testowy przelew', 'args': {} },
+            { 'name': 'ctl00$CT$txtPointsQuota', 'type': 'hidden', 'value': points, 'args': {} },
+            { 'name': '__EVENTTARGET', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': '__EVENTARGUMENT', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': '__VIEWSTATE', 'type': 'hidden', 'value': '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', 'args': {} },
+            { 'name': '__EVENTVALIDATION', 'type': 'hidden', 'value': '/wEWCQLK5teHBQKfxMnVCwKhouGmCwKG0LXLBgKhupnlAgLhuo3bCwKO77aPCQLSgOePAwKK2Le+Aw==', 'args': {} },
+            { 'name': '__ASYNCPOST', 'type': 'hidden', 'value': 'false', 'args': {} },
+            { 'name': 'ctl00$CT$btnTransferSubmit', 'type': 'submit', 'value': 'true', 'args': {} },
+        ])
+
+        # step 2 make transfer
+        response = self.browser.submit()
+        soup = BeautifulSoup( response.read() )
+
+        viewstate = str( soup.find( 'input', { 'name': '__VIEWSTATE' })['value'] )
+        eventvalidation = str( soup.find( 'input', { 'name': '__EVENTVALIDATION' })['value'] )
+        token = str( soup.find( 'input', { 'name': 'ctl00$CT$ahfToken2' })['value'] )
+        time = str( soup.find( 'input', { 'name': 'ctl00$CT$ahfTime' })['value'] )
+
+        self._create_form( 'http://chomikuj.pl/Punkty.aspx', [
+            { 'name': 'ctl00$SM', 'type': 'hidden', 'value': 'ctl00$CT$upPoints|ctl00$CT$btnMakePointsTransfer', 'args': {} },
+            { 'name': 'PageCmd', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': 'PageArg', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': 'ctl00$CT$ahfToken2', 'type': 'hidden', 'value': token, 'args': {} },
+            { 'name': 'ctl00$CT$ahfTime', 'type': 'hidden', 'value': time, 'args': {} },
+            { 'name': 'ctl00$CT$ahfChomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
+            { 'name': 'ctl00$CT$ahfTransferTitle', 'type': 'hidden', 'value': 'testowy przelew', 'args': {} },
+            { 'name': 'ctl00$CT$ahfPointsQuota', 'type': 'hidden', 'value': points, 'args': {} },
+            { 'name': 'ctl00$CT$ahfChomikName', 'type': 'hidden', 'value': to, 'args': {} },
+            { 'name': '__EVENTTARGET', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': '__EVENTARGUMENT', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': '__VIEWSTATE', 'type': 'hidden', 'value': viewstate, 'args': {} },
+            { 'name': '__EVENTVALIDATION', 'type': 'hidden', 'value': eventvalidation, 'args': {} },
+            { 'name': '__ASYNCPOST', 'type': 'hidden', 'value': 'false', 'args': {} },
+            { 'name': 'ctl00$CT$btnMakePointsTransfer', 'type': 'hidden', 'value': '', 'args': {} },
+        ])
+
+        self.browser.submit()
+        self.browser.select_form( name='aspnetForm' )
+        self.browser.submit()
+
+        self.browser.select_form( name='aspnetForm' )
+        text = self.browser.submit().read()
+        if re.search( 'Przelew został wykonany', text ):
+            return True
+        return False
+
     def invite( self, user ):
         #print " -- inviting %s" % user
         response = self.browser.open( "http://chomikuj.pl/%s" % user )
@@ -519,7 +590,7 @@ class Chomik:
 
         for field in fields:
             if field.has_key( 'value' ):
-                self.browser[ field['name'] ] = field['value']
+                self.browser[ field['name'] ] = str( field['value'] )
 
 
     def _is_item_done( self, type, item ):
@@ -535,5 +606,16 @@ class Chomik:
         f = open( "db/%s_%s.dat" % ( self.name, type ), 'a' )
         f.write( '%s\n' % item )
         f.close()
+
+    def max_points_to_transfer( self, points ):
+        if points <= 1000:
+            return 0
+        result = points - 1000
+        sum = 0
+        while sum <= 1000:
+            result -= 5
+            profit = ( result/100. ) * 5
+            sum = points - ( result + profit )
+        return result
 
 # vim: fdm=marker ts=4 sw=4 sts=4

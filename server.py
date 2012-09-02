@@ -450,7 +450,59 @@ class UserStatsCommand( Command ):
                 print
             else:
                 print colored( "Error cannot connect ...", 'red', attrs=['bold'] )
-            
+
+
+class TransferPoints( Command ):
+    name = 'transfer-points'
+    ARGS_ORDER = ['login', 'to', 'points']
+    ARGS = {
+        'login': Command.TEXT,
+        'to': Command.TEXT,
+        'points': { 'default': None, 'type': Command.TEXT }
+    }
+
+    def execute( self ):
+        user = self.server.db.fetchone( 'SELECT login, password FROM users WHERE login=?', ( self.login, ) )
+        if user:
+            users = [ user ]
+        else:
+            raise CommandError( "User %s does not exist" % self.login )
+
+        chomik = Chomik( user[0], user[1] )
+        if chomik.connect():
+            if chomik.transfer( self.to, self.points ):
+                print self.DONE
+            else:
+                print self.ERROR
+        else:
+            print colored( "Error cannot connect ...", 'red', attrs=['bold'] )
+
+class TransferAllPoints( Command ):
+    name = 'transfer-all-points'
+    ARGS_ORDER = ['login']
+    ARGS = {
+        'login': Command.TEXT,
+    }
+
+    def execute( self ):
+        all_points = 0
+        for user, password in self.server.db.fetch( 'SELECT login, password FROM users WHERE login !=?', (self.login,) ):
+            chomik = Chomik( user, password )
+            if chomik.connect():
+                stats = chomik.get_stats()
+                max = chomik.max_points_to_transfer( stats['points'] )
+                print "user %s, points: %s, to transfer: %s" % ( colored( user, 'green', attrs=['bold'] ), colored( stats['points'], 'white', attrs=['bold'] ), colored( max, 'white', attrs=['bold'] ) )
+                if max > 99:
+                    if chomik.transfer( self.login ):
+                        print self.DONE
+                        all_points += max
+                    else:
+                        print self.ERROR
+            else:
+                print colored( "Error cannot connect ...", 'red', attrs=['bold'] )
+
+            print "TRANSFERED: %s" % colored( all_points, 'yellow', attrs=['bold'] ) 
+
 
 class ChomikServer( object ):
 
@@ -469,6 +521,8 @@ class ChomikServer( object ):
         'remove-on-start': RemoveFromStartCommand,
         'user-stats'     : UserStatsCommand,
         'clear-memory'   : ClearMemoryCommand,
+        'transfer-points': TransferPoints,
+        'transfer-all-points': TransferAllPoints,
     }
 
     def __init__( self ):

@@ -43,8 +43,8 @@ class Db( object ):
         return cursor.fetchone()
 
     @classmethod
-    def fetch( cls, query, headers=False ):
-        cursor = cls.execute( query )
+    def fetch( cls, query, values=(), headers=False ):
+        cursor = cls.execute( query, values )
         result = cursor.fetchall()
         if headers:
             result.reverse()

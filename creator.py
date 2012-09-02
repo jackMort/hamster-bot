@@ -45,23 +45,7 @@ if __name__ == "__main__":
     
     chomik = Chomik( options.username, options.password )
     chomik.connect()
-
-    good = []
-    sizes = []
-    full_title = "Company (2002)"
-    year = "2002"
-    title = "Company"
-    items = chomik.search( full_title )
-    for item in items:
-        if item['title'] == full_title or item['title'] == title or item['title'] == '%s %s' % ( title, year ):
-            if not item['size'] in sizes:
-                good.append( item )
-                sizes.append( item['size'] )
-
-    for g in good:
-        print g['id']
-        chomik.clone( g['id'], 2783 )
-
+    print chomik.transfer( 'jackMort' )
     
     #chomik.search( "Drop Zone (1994)" )
 # vim: fdm=marker ts=4 sw=4 sts=4
