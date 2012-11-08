@@ -28,9 +28,16 @@ from termcolor import colored
 from texttable import Texttable
 from imdb.utils import analyze_title
 from colorama import init as colorama_init
+from apscheduler.scheduler import Scheduler
+from optparse import OptionParser, OptionGroup
 
 from db import Db
 from chomikuj import Chomik, CaptchNeededException
+
+# INIT COMMAND LINE OPTIONS
+parser = OptionParser( usage="usage: %prog [OPTIONS]" )
+
+parser.add_option( "-s", "--skip", dest="skip_background", action="store_true", help="skip background strategy" )
 
 
 # INIT CONSOLE
@@ -86,9 +93,10 @@ def run_chomik_thread( *args, **kwargs ):
     return thread.run()
 
 class ChomikThread( object ):
-    def __init__( self, id, login, password, strategy ):
+    def __init__( self, id, login, password, strategy, server ):
         self.id = id
         self.login = login
+        self.server = server
         self.password = password
         self.strategy = strategy
 
@@ -167,8 +175,11 @@ class ChomikThread( object ):
                         good = []
                         if movie['kind'] in ( 'movie', 'tv movie' ): # TODO search series
                             sizes = []
+                            self.chomik.logger.debug( 'searching: %s' % full_title ) 
                             items = self.chomik.search( full_title )
+                            self.chomik.logger.debug( 'find: %d' % len( items ) ) 
                             for item in items:
+                                self.chomik.logger.debug( '%s, %s' % item['title'], item['size'] )
                                 if item['title'].lower() == full_title.lower() or item['title'].lower().startswith( full_title.lower() ) or item['title'].lower() == movie['title'].lower() or item['title'].lower == ( '%s %s' % ( movie['title'], year ) ).lower():
                                     if not item['size'] in sizes:
                                         good.append( item )
@@ -183,19 +194,18 @@ class ChomikThread( object ):
                                     self.chomik.clone( item['id'], id )
 
             elif self.strategy == 'smieciarz':
-                self.chomik.connect()
 
-                self.generate_other_users()
+                if self.chomik.connect():
+                    self.generate_other_users()
 
-                users = Db.fetch( "SELECT login from other_users" )
-                random.shuffle( users )
-                for user in users:
-                    url = '/%s' % user
-                    full_url = 'http://chomikuj.pl/%s%s' % ( self.login, url )
-                    #if not server.db.fetchone( "SELECT * FROM folders WHERE user_id=? AND url=?", ( self.id, full_url ) ):
-                    if not self.chomik.check_directory( url )[0]:
-                        self.chomik.copy_directory_tree( url )
-                        #server.db.execute( "INSERT INTO folders VALUES (?, ?, ?, ?)", ( id, self.id, title, url ), commit=True )
+                    users = Db.fetch( "SELECT login from other_users" )
+                    random.shuffle( users )
+                    for user in users:
+                        url = '/%s' % user
+                        full_url = 'http://chomikuj.pl/%s%s' % ( self.login, url )
+                        if not self.chomik.check_directory( url )[0]:
+                            self.chomik.copy_directory_tree( url, timeout=self.server.timeout )
+                            self.generate_other_users( 5 )
 
         except Exception, e:
             print e
@@ -208,6 +218,10 @@ class ChomikThread( object ):
     def generate_other_users( self, limit=10 ):
         users = self.chomik.generate_list( limit, to_file=False )
         for user in users if users else []:
+
+            self.chomik.sleep( self.server.timeout )
+            self.chomik.invite( user )
+
             if not Db.fetchone( "SELECT * FROM other_users WHERE login=?", ( user, ) ):
                 Db.execute( "INSERT INTO other_users ( login ) VALUES ( ? )", ( user, ), commit=True )
 
@@ -257,6 +271,7 @@ class QuitCommand( Command ):
             print "stopping %s ... " % colored( login, 'blue', attrs=['bold'] )
             self.server.threads[login].terminate()
         time.sleep( 1 )
+        self.server.sched.shutdown()
         print
         print "GOODBYE ME LITTLE FRIENDOooo !"
         sys.exit( 1 )
@@ -393,6 +408,20 @@ class DeleteCommand( Command ):
         self.server.db.execute( "DELETE FROM %s WHERE id = ?" % self.type, ( self.id ), commit=True )
         print "%s deleted!" % self.type
 
+class SetTimeoutCommand( Command ):
+    name = 'set-timeout'
+    ARGS = {
+        'timeout': Command.INT,
+    }
+
+    def execute( self ):
+        self.server.timeout = int( self.timeout )
+        if not Db.fetch( "SELECT * FROM settings WHERE key='timeout'" ):
+            Db.execute( "INSERT INTO settings VALUES ('timeout', ?, 'INT' ) ", ( self.timeout, ), commit=True )
+        else:
+            Db.execute( "UPDATE settings SET value=? WHERE key='timeout'", ( self.timeout, ), commit=True )
+        print self.DONE
+
 class LoadUsersCommand( Command ):
     name = 'load-users'
     ARGS = {
@@ -501,7 +530,7 @@ class TransferAllPoints( Command ):
             else:
                 print colored( "Error cannot connect ...", 'red', attrs=['bold'] )
 
-            print "TRANSFERED: %s" % colored( all_points, 'yellow', attrs=['bold'] ) 
+        print "TRANSFERED: %s" % colored( all_points, 'yellow', attrs=['bold'] ) 
 
 
 class ChomikServer( object ):
@@ -516,20 +545,24 @@ class ChomikServer( object ):
         'stop'           : StopCommand,
         'start'          : StartCommand,
         'status'         : StatusCommand,
+        'delete'         : DeleteCommand,
+        'transfer-points': TransferPoints,
         'load-users'     : LoadUsersCommand,
+        'set-timeout'    : SetTimeoutCommand,
         'add-on-start'   : AddTOStartCommand,
-        'remove-on-start': RemoveFromStartCommand,
         'user-stats'     : UserStatsCommand,
         'clear-memory'   : ClearMemoryCommand,
-        'transfer-points': TransferPoints,
         'transfer-all-points': TransferAllPoints,
+        'remove-on-start': RemoveFromStartCommand,
     }
 
-    def __init__( self ):
+    def __init__( self, skip_background=False ):
         self.db = Db
         self.users = {}
         self.threads = {}
-
+        self.sched = Scheduler()
+        
+        self.skip_background = skip_background
         multiprocessing.freeze_support()
 
     def run( self ):
@@ -541,13 +574,17 @@ class ChomikServer( object ):
         print
 
         self.check_db()
-        users = self.db.fetch( "SELECT * FROM users WHERE on_start=1" )
-        self.log( "starting background strategy" )
+        self.load_settings()
+        self.run_scheduler()
 
-        for user in users:
-            id, chomik_id, login, password, strategy, on_start = user
-            self.users[login] = ( id, login, password, strategy )
-            self.start_thread( login )
+        users = self.db.fetch( "SELECT * FROM users WHERE on_start=1" )
+
+        if not self.skip_background:
+            self.log( "starting background strategy" )
+            for user in users:
+                id, chomik_id, login, password, strategy, on_start = user
+                self.users[login] = ( id, login, password, strategy )
+                self.start_thread( login )
 
         print 
         while True:
@@ -570,10 +607,32 @@ class ChomikServer( object ):
         if user:
             id, chomik_id, login, password, strategy, on_start = user
             self.users[login] = ( id, login, password, strategy )
-            self.threads[login] = multiprocessing.Process( target=run_chomik_thread, args=( id, login, password, strategy ) )
+            self.threads[login] = multiprocessing.Process( target=run_chomik_thread, args=( id, login, password, strategy, self ) )
             self.threads[login].start()
         else:
             print "user %s not found ..." % login
+
+    def run_scheduler( self ):
+        self.log( "starting scheduler" )
+        self.sched.start()
+
+        self.sched.add_interval_job( self.update_stats, minutes=10 )
+
+    def load_settings( self ):
+        self.log( "loading settings" )
+        self.timeout = 1
+        for key, value, type in self.db.fetch( "SELECT * FROM settings" ):
+            if type == 'INT':
+                value = int( value )
+            setattr( self, key, value )
+
+    def update_stats( self ):
+        return #TODO
+        users = self.db.fetch( 'SELECT login, password FROM users' )
+        for user in users:
+            chomik = Chomik( user[0], user[1] )
+            if chomik.connect():
+                stats = chomik.get_stats()
 
     def check_db( self ):
         self.log( "checking db structure ..." )
@@ -583,6 +642,7 @@ class ChomikServer( object ):
         CREATE TABLE IF NOT EXISTS users ( id INTEGER PRIMARY KEY, chomik_id INT, login TEXT, password TEXT, strategy TEXT, on_start INT );
         CREATE TABLE IF NOT EXISTS folders ( id INTEGER, user_id INTEGER, name TEXT, url TEXT );
         CREATE TABLE IF NOT EXISTS other_users ( id INTEGER PRIMARY KEY, login TEXT );
+        CREATE TABLE IF NOT EXISTS settings ( key TEXT, value TEXT, type TEXT );
         """
         )
 
@@ -600,7 +660,9 @@ class ChomikServer( object ):
         print " --- %s" % msg
 
 if __name__ == "__main__":
-    server = ChomikServer()
+    ( options, args ) = parser.parse_args()
+
+    server = ChomikServer( skip_background=options.skip_background )
     server.run()
 
 # vim: fdm=marker ts=4 sw=4 sts=4

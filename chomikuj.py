@@ -117,18 +117,32 @@ class Chomik:
             ])
 
             self.browser.submit()
-            self.chomik_id = self.chomik_name = None
+            self.chomik_id = self.chomik_name = self.token = None
         return True
 
     def check_directory( self, url ):
-        name = url.split( '/' )[-1]
+        raw_url = url
         url = url if url.startswith( '/' ) else "/%s" % url
         if self._cached_directories.has_key( url ):
             return self._cached_directories[url], url
 
-        url = '/'.join( [ urllib.quote_plus( p.encode( 'utf-8' ) ) for p in url.split('/') ] )
+        parts = []
+        parts_raw = []
+        for p in url.split( '/' ):
+            for ch, code in self.CHAR_MAP.items():
+                p = p.replace( ch, code )
+            parts_raw.append(p)
+            p = urllib.quote_plus( p.encode( 'utf-8' ) )
+            parts.append( p )
+        
+        name = parts_raw[-1]
+
+        url = '/'.join( parts )
         full_url = "http://chomikuj.pl/%s%s" % ( self.chomik_name, url )
         full_url = full_url.replace( '%', '*' )
+        #print "----"
+        #print "url     :", [url]
+        #print "full_url:", full_url
 
         response = self.browser.open( full_url )
         text = response.read()
@@ -140,14 +154,14 @@ class Chomik:
 
         try:
             title = soup.find( 'div', { 'class': 'frameHeaderNoImage frameHeader borderTopRadius' } ).h1.a.string
-            if name == title:
+            if name.lower() == title.lower():
                 form = soup.find( 'form', id='FileListForm' )
                 id = form.find( 'input', { 'name': 'folderId' } )['value']
 
                 self._cached_directories[url] = id
                 return id, full_url
-        except:
-            pass
+        except Exception, e:
+            print e
 
         return None, None
 
@@ -176,14 +190,18 @@ class Chomik:
         '>' : '&#62;',
         '|' : '&#124;',
         '.' : '&#46;',
+        ':' : '&#58;',
     }
     def create_directory( self, url ):
         url = url[1:] if url.startswith( '/' ) else url
         folder_id = "0"
         dir_route = []
+        raw_dir_route = []
         for folder in url.split( '/' ):
+            raw_dir_route.append( folder )
             for ch, code in self.CHAR_MAP.items():
                 folder = folder.replace( ch, code )
+            
             dir_route.append( folder )
             dir_id, full_url = self.check_directory( '/'.join( dir_route ) )
             if dir_id is not None:
@@ -201,11 +219,23 @@ class Chomik:
                 ])
 
                 response = self.browser.submit()
-                folder_id, full_url = self.check_directory( '/'.join( dir_route ).decode( 'latin1' ) )
+                folder_id, full_url = self.check_directory( '/'.join( raw_dir_route ) )
 
         return folder_id, full_url
 
-    def copy_directory_tree( self, url, db=None, captcha='' ):
+    def set_folder_description( self, url, description ):
+        folder_id, full_url = self.create_directory( url )
+        self._create_form( 'http://chomikuj.pl/action/FolderOptions/ChangeDescription', [
+            { 'name': 'folderId', 'type': 'hidden', 'value': folder_id, 'args': {} },
+            { 'name': 'chomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
+            { 'name': 'description', 'type': 'text', 'value': description, 'args': {} },
+            { 'name': '__RequestVerificationToken', 'type': 'text', 'value': self.token, 'args': {} },
+        ])
+
+        data = json.loads( self.browser.submit().read() )
+        return data['IsSuccess']
+
+    def copy_directory_tree( self, url, db=None, captcha='', timeout=0 ):
         if db is None:
             db = {}
 
@@ -250,6 +280,7 @@ class Chomik:
                     { 'name': '__RequestVerificationToken', 'type': 'hidden', 'value': self.token, 'args': {} },
                 ])
 
+                self.sleep( timeout )
                 response = self.browser.submit()
                 text = response.read()
                 try:
@@ -285,7 +316,7 @@ class Chomik:
 
     def read_captcha( self, captcha_src ):
         
-        if self.captcha_attempt >= 3:
+        if self.captcha_attempt >= 10:
             self.logger.info( "diconnecting for new captcha ..." )
             self.diconnect()
             self.connect()
@@ -298,56 +329,88 @@ class Chomik:
         captcha_url = "http://chomikuj.pl%s" % captcha_src
         captcha_filename = "%s-captcha.jpg" % self.chomik_id
 
-        count = 0
-        while count < 10:
+        if not self.captcha_latest:
             self.logger.debug( "READING CAPTCHA, ATTEMPT: %s" % self.captcha_attempt )
+            self.captchas_v2 = []
+            count = 0
+            while count < 10:
 
-            file = open( captcha_filename, mode='wb' )
-            file.write( self.browser.open_novisit( captcha_url ).read() )
-            file.close()
+                file = open( captcha_filename, mode='wb' )
+                file.write( self.browser.open_novisit( captcha_url ).read() )
+                file.close()
 
-            from tools.captcha import read_captcha
-            captcha = read_captcha( captcha_filename )
-            if captcha and len( captcha ) == 5:
-                self.captcha_latest.append( captcha )
+                from tools.captcha import read_captcha
+                captcha = read_captcha( captcha_filename )
+                if captcha and len( captcha ) == 5:
+                    self.captcha_latest.append( captcha )
 
-            count+=1
-            most_common = collections.Counter( self.captcha_latest ).most_common()
-            self.logger.debug( '%s, %s' % (count, most_common ) )
+                count+=1
 
-        if len( most_common ) and most_common[0][1] >= 2:
+        most_common = collections.Counter( self.captcha_latest ).most_common()
+        self.logger.debug( '%s' % most_common )
+
+        letters = {
+            0: [],
+            1: [],
+            2: [],
+            3: [],
+            4: [],
+        }
+        for s in self.captcha_latest:
+            for i, l in enumerate( s ):
+                letters[i].append( l )
+       
+        min_match = None
+        captcha_v2 = ""
+        for l in letters.values():
+            mc = collections.Counter( l ).most_common(1)
+            if len( mc ):
+                captcha_v2 += mc[0][0]
+                if min_match is None or mc[0][1] < min_match:
+                    min_match = mc[0][1]
+
+        if len( most_common ) and most_common[0][1] >= 3:
             captcha = most_common[0][0]
+        elif len( captcha_v2 ) == 5 and not captcha_v2 in self.captchas_v2:
+            captcha = captcha_v2
         else:
-            captcha = len( self.captcha_latest ) and self.captcha_latest[0]
+            captcha = most_common[0][0]
 
+        self.captchas_v2.append( captcha )
         self.captcha = captcha
         return captcha
 
-    def search( self, query, type='Video' ):
+    def search( self, query, type='Video', limit_pages=3, **kwargs ):
         page = 0
         results = []
         has_next = True
 
         while has_next:
             page += 1
-            response = self.browser.open( 'http://chomikuj.pl/action/SearchFiles?FileName=%s&FileType=%s&Page=%d' % ( urllib.quote_plus( query.encode( 'utf-8' ) ), type, page ) )
+            extra = ''
+            for k, v in kwargs.items():
+                extra += '&%s=%s' % ( k, v )
+        
+            response = self.browser.open( 'http://chomikuj.pl/action/SearchFiles?FileName=%s&FileType=%s&Page=%d%s' % ( urllib.quote_plus( query.encode( 'utf-8' ) ), type, page, extra ) )
 
             soup = BeautifulSoup( response.read() )
             self.token = soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] # TODO
 
-            has_next = page < 3 and soup.find( 'a', { 'class': 'right' } )
+            has_next = page < limit_pages and soup.find( 'a', { 'class': 'right' } )
 
             for div in soup.findAll( 'div', { 'class': 'filerow fileItemContainer' } ):
                 a = div.find( 'a', { 'class': 'expanderHeader downloadAction'} )
+                extension = a.contents[-1].strip()
                 id = div.find( 'div', { 'class': 'fileActionsButtons clear visibleButtons  fileIdContainer' } )['rel']
                 size = div.find( 'ul', { 'class': 'borderRadius tabGradientBg' } ).li.span.string
-                results.append( dict( title=a['title'], id=id, url="http://chomikuj.pl%s" % a['href'], size=size ) )
+                results.append( dict( title=a['title'], id=id, url="http://chomikuj.pl%s" % a['href'], size=size, extension=extension, full_name=a['title'] + extension ) )
 
         return results
 
-    def clone( self, file_id, folder_id ):
+    def clone( self, file_id, folder_id, captcha='' ):
         if not self.token:
             self.search( 'asdsd asd asd as da sdasd' )#TODO
+            print " --- dupa"
         time.sleep( 2 )
         self._create_form( 'http://chomikuj.pl/action/content/copy/CopyFile', [
             { 'name': 'ChomikId', 'type': 'hidden', 'value': self.chomik_id, 'args': {} },
@@ -356,10 +419,32 @@ class Chomik:
 
             { 'name': 'SelectedFolderId', 'type': 'text', 'value': str( folder_id ), 'args': {} },
             { 'name': '__RequestVerificationToken', 'type': 'hidden', 'value': self.token, 'args': {} },
+            { 'name': 'recaptcha_response_field', 'type': 'text', 'value': captcha, 'args': {} },
         ])
 
         response = self.browser.submit()
-        print response.read()
+        text = response.read()
+
+        if "Plik został zachomikowany" in text:
+            self.logger.info( "%s, zachomikowany ..." % file_id )
+            self.captcha_attempt = 0
+            self.captcha_latest = []
+
+            return True
+
+        inner_soup = BeautifulSoup( text )
+        captcha = inner_soup.find( 'img', { 'alt': 'captcha' } )
+        if captcha:
+            self.token = str( inner_soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] )
+            captcha = self.read_captcha( captcha['src'] )
+            if captcha:
+                self.logger.info( "trying with captcha: %s" % captcha )
+                self.captcha_attempt += 1
+                return self.clone( file_id, folder_id, captcha )
+            else:
+                raise NeedCaptcha()
+        else:
+            self.logger.debug( "copy error response: %s" % text )
 
     def get_stats( self, name=None ):
         r = {
@@ -411,7 +496,7 @@ class Chomik:
             { 'name': 'PageCmd', 'type': 'hidden', 'value': '', 'args': {} },
             { 'name': 'PageArg', 'type': 'hidden', 'value': '', 'args': {} },
             { 'name': 'ctl00$CT$txtChomik', 'type': 'hidden', 'value': to, 'args': {} },
-            { 'name': 'ctl00$CT$txtTitle', 'type': 'hidden', 'value': 'testowy przelew', 'args': {} },
+            { 'name': 'ctl00$CT$txtTitle', 'type': 'hidden', 'value': 'przelew', 'args': {} },
             { 'name': 'ctl00$CT$txtPointsQuota', 'type': 'hidden', 'value': points, 'args': {} },
             { 'name': '__EVENTTARGET', 'type': 'hidden', 'value': '', 'args': {} },
             { 'name': '__EVENTARGUMENT', 'type': 'hidden', 'value': '', 'args': {} },
@@ -459,60 +544,95 @@ class Chomik:
         return False
 
     def invite( self, user ):
-        #print " -- inviting %s" % user
+        self.logger.info( 'inviting: %s' % user )
+        
         response = self.browser.open( "http://chomikuj.pl/%s" % user )
-        matcher = re.search( '<input name="ctl00\$CT\$ChomikID" type="hidden" id="ctl00_CT_ChomikID" value="(\d+)" \/>', response.read() )
-        if matcher:
-            chomik_id = matcher.group( 1 )
-            self._create_form( 'http://chomikuj.pl/Chomik/Friends/NewFriend', [
-                { 'name': 'chomikFriendId', 'type': 'hidden', 'value': chomik_id, 'args': {} },
-                { 'name': 'frDescr', 'type': 'text', 'value': '', 'args': {} },
-                { 'name': 'frMsg', 'type': 'text', 'value': '', 'args': {} },
-                { 'name': 'fromPMBox', 'type': 'hidden', 'value': 'false', 'args': {} },
-                { 'name': 'groupId', 'type': 'text', 'value': '0', 'args': {} },
-                { 'name': 'page', 'type': 'text', 'value': '1', 'args': {} },
+        soup = BeautifulSoup( response.read() )
+
+        form = soup.find( 'form', id='FormAccountInfoAddFriend' )
+        is_active = form['style'] != 'display: none;'
+        friend_id = form.find( 'input', id='chomikFriendId' )['value']
+        token = str( soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] )
+        if is_active:
+            self._create_form( 'http://chomikuj.pl/action/Friends/NewFriend', [
+                { 'name': 'ChomikFriendId', 'type': 'hidden', 'value': friend_id, 'args': {} },
+                { 'name': 'Descr', 'type': 'text', 'value': '', 'args': {} },
+                { 'name': 'FroPMBox', 'type': 'text', 'value': '', 'args': {} },
+                { 'name': 'Group', 'type': 'text', 'value': '0', 'args': {} },
+                { 'name': 'Page', 'type': 'text', 'value': '1', 'args': {} },
+                { 'name': 'Msg', 'type': 'text', 'value': '', 'args': {} },
+                { 'name': '__RequestVerificationToken', 'type': 'text', 'value': token, 'args': {} },
             ])
 
             response = self.browser.submit()
-            text = response.read()
-            if re.search( 'Nie można dodać tego samego Chomika jako przyjaciela', text ):
-                #print "  -- already invited"
-                pass
+            data = json.loads( response.read() )
+            
+            self.logger.info( data.get( 'Content' ) )
+            return data.get( 'isSuccess' )
+        return False
 
-            elif re.search( 'Chomik został dodany', text ):
-                #print "  -- INVITED"
-                pass
+    def get_downloaded_files( self ):
+        viewstate = '/wEPDwULLTEyMzE5NjI3NTIQZGQWAmYPZBYCAgEPZBYCAgcPZBYCAgEPZBYCZg9kFgICAQ9kFgJmD2QWBAICD2QWAgIBDw9kFgIeBWNsYXNzBQhzZWxlY3RlZGQCBg9kFgQCAg9kFgICAg8UKwACZGRkAgMPZBYCAgsPDxYCHgxNYXhpbXVtVmFsdWUFCjIxNDc0ODM2NDdkZBgEBRFjdGwwMCRDVCRtdlBvaW50cw8PZGZkBRdjdGwwMCRDVCRtdlBvaW50c1dpbmRvdw8PZGZkBRNjdGwwMCRDVCRsdkxpY2Vuc2VzD2dkBRJjdGwwMCRDVCRsdkhpc3RvcnkPZ2Q='
+        eventvalidation = '/wEWBALwt/+MBAKfxMnVCwKhouGmCwKG0LXLBg=='
 
-            else:
-                #print "  -- ivite ERROR :("
-                pass
+        self._create_form( 'http://chomikuj.pl/Punkty.aspx', [
+            { 'name': 'ctl00$SM', 'type': 'hidden', 'value': 'ctl00$CT$upPoints|ctl00$CT$lbHistory', 'args': {} },
+            { 'name': '__EVENTTARGET', 'type': 'hidden', 'value': 'ctl00$CT$lbHistory', 'args': {} },
+            { 'name': '__EVENTARGUMENT', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': '__VIEWSTATE', 'type': 'hidden', 'value': viewstate, 'args': {} },
+            { 'name': '__EVENTVALIDATION', 'type': 'hidden', 'value': eventvalidation, 'args': {} },
+            { 'name': 'PageCmd', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': 'PageArg', 'type': 'hidden', 'value': '', 'args': {} },
+            { 'name': '__ASYNCPOST', 'type': 'hidden', 'value': 'false', 'args': {} },
+        ])
+
+        result = {}
+        response = self.browser.submit()
+        soup = BeautifulSoup( response.read() )
+        for a in soup.find( 'table' ).findAll( 'a', {'class': 'pointsDetails' } ):
+            page=1
+            while True:
+                response = self.browser.open( "http://chomikuj.pl%s&page=%d" % ( a['href'], page ) )
+                data = json.loads( response.read() )
+                soup = BeautifulSoup( data['Content'] )
+                trs = soup.findAll('tr')
+                if len( trs ) == 1:
+                    break
+
+                for tr in trs:
+                    tds = tr.findAll( 'td' )
+                    if len( tds ):
+                        url, size, count, points = tr.findAll( 'td' )
+                        count = int( count.string.strip() )
+                        if result.has_key( url.a['href'] ):
+                            count += result[ url.a['href'] ]['count']
+
+                        result[url.a['href']] = { 'url': url.a['href'], 'count': count }
+                page+=1
+        return result.values()
 
     def send_chat_message( self, user, message, recaptchaChallengeVal='', recaptchaResponseVal='' ):
-        #print " -- sending chat message %s" % user
         response = self.browser.open( "http://chomikuj.pl/%s" % user )
-        matcher = re.search( '<input name="ctl00\$CT\$ChomikID" type="hidden" id="ctl00_CT_ChomikID" value="(\d+)" \/>', response.read() )
-        if matcher:
-            chomik_id = matcher.group( 1 )
-            self._create_form( 'http://chomikuj.pl/services/ChomikChatService.asmx/AddChatMessage', [
-                { 'name': 'idChomikTo', 'type': 'hidden', 'value': chomik_id, 'args': {} },
-                { 'name': 'nick', 'type': 'text', 'value': '', 'args': {} },
-                { 'name': 'pageNum', 'type': 'text', 'value': '0', 'args': {} },
-                { 'name': 'recaptchaChallengeVal', 'type': 'hidden', 'value': recaptchaChallengeVal, 'args': {} },
-                { 'name': 'recaptchaResponseVal', 'type': 'hidden', 'value': recaptchaResponseVal, 'args': {} },
-                { 'name': 'timeFilter', 'type': 'text', 'value': '0', 'args': {} },
-                { 'name': 'text', 'type': 'text', 'value': message, 'args': {} },
+        soup = BeautifulSoup( response.read() )
+        form = soup.find( 'form', { 'id': 'chatSendMessage' } )
+        if form:
+            chomik_id = form.find( 'input', { 'id': 'TargetChomikId' } )['value']
+            mode = form.find( 'input', { 'id': 'Mode' } )['value']
+            bskr = form.find( 'input', { 'id': 'bskr' } )['value']
+            self.token = str( soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] )
+
+            self._create_form( 'http://chomikuj.pl/action/ChomikChat/SendMessage', [
+                { 'name': 'TargetChomikId', 'type': 'hidden', 'value': chomik_id, 'args': {} },
+                { 'name': 'mode', 'type': 'text', 'value': mode, 'args': {} },
+                { 'name': 'bskr', 'type': 'text', 'value': bskr, 'args': {} },
+                { 'name': 'Message', 'type': 'text', 'value': message, 'args': {} },
+                { 'name': '__RequestVerificationToken', 'type': 'text', 'value': self.token, 'args': {} },
             ])
+            self.browser.addheaders.append(['X-Requested-With', 'XMLHttpRequest'])
 
             response = self.browser.submit()
             text = response.read()
-            if re.search( '<NeedCaptcha>true</NeedCaptcha>', text ):
-                raise CaptchNeededException()
-                
-            elif re.search( '<Status>true</Status>', text ):
-                print "  -- SENDED"
-
-            else:
-                print " -- ERROR"
+            print text
 
     def read_directory( self, url ):
         sub_url = url if url.startswith( '/' ) else "/%s" % url
@@ -546,6 +666,21 @@ class Chomik:
             url = matcher.group( 1 )
             name = re.search( '&name=(.*)&', url ).group( 1 )
             os.system( "wget -c '%s' -O '%s'" % ( url, name ) )
+
+    def editDescription( self, description ):
+        response = self.browser.open( 'http://chomikuj.pl/action/Account/Edit' )
+        soup = BeautifulSoup( response.read() )
+
+        description = description.replace( '\n', '\n\r' )
+        self.token = str( soup.find( 'input', { 'name': '__RequestVerificationToken' })['value'] )
+
+        self._create_form( 'http://chomikuj.pl/action/Account/ChangeDescription', [
+            { 'name': 'description', 'type': 'text', 'value': description, 'args': {} },
+            { 'name': '__RequestVerificationToken', 'type': 'hidden', 'value': self.token, 'args': {} },
+        ])
+
+        response = self.browser.submit()
+        return 'redirectUrl' in response.read()
 
     def generate_list( self, count=100, to_file=True, filename="list.txt" ):
         self.logger.info( "generating list of users" )
@@ -617,5 +752,9 @@ class Chomik:
             profit = ( result/100. ) * 5
             sum = points - ( result + profit )
         return result
+
+    def sleep( self, timeout ):
+        self.logger.debug( "going sleep for: %d ..." % timeout )
+        time.sleep( timeout )
 
 # vim: fdm=marker ts=4 sw=4 sts=4
